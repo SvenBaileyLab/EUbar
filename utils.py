@@ -9,6 +9,7 @@ from statsmodels.discrete.discrete_model import NegativeBinomial
 import hashlib
 import pandas as pd
 import math
+import matplotlib.pyplot as plt
 
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -158,6 +159,28 @@ def match_kmers_to_wildcards(kmer_positions, wildcard_variants, snp_indices, mot
         comp_alleles[motif_pos] = {snp_index: ref_allele}
 
     return comp_alleles, matched
+
+def match_all_kmers_to_wildcards(kmer_positions, wildcard_variants):
+    """
+    Matches all k-mers to wildcard patterns, without requiring snp_index or reference allele.
+
+    Returns:
+        matched: {motif_pos: {allele: {region: pos}}}
+    """
+    matched = {}
+
+    for motif_pos, wildcard_kmer in wildcard_variants.items():
+        pattern = re.compile("^" + wildcard_kmer.replace(".", "[ACGT]") + "$")
+        snp_index = wildcard_kmer.index(".")
+
+        for kmer in kmer_positions:
+            if pattern.fullmatch(kmer):
+                allele = kmer[snp_index]
+                matched.setdefault(motif_pos, {}).setdefault(allele, {}).update(
+                    kmer_positions[kmer]
+                )
+
+    return matched
 
 
 def select_random_probes(kmer_positions, matched_probes, num_random=500, seed=43020):
@@ -713,7 +736,7 @@ def fix_random_block_structure(rand_probes, pos):
         }
     }
 
-def print_rows_as_tsv(rows, header=("wildcard_kmer", "filled_kmer", "window_index", "snp_index", "type", "coef", "pval")):
+def print_rows_as_tsv(rows, header=("wildcard_kmer", "filled_kmer", "window_index", "snp_index", "type", "allele", "coef", "pval", "absolute_pos")):
     """
     Print a list of rows as a TSV to stdout, replacing NaNs with "NaN" string explicitly.
 
@@ -734,6 +757,59 @@ def print_rows_as_tsv(rows, header=("wildcard_kmer", "filled_kmer", "window_inde
         df_rows.append(formatted)
 
     df = pd.DataFrame(df_rows, columns=[
-    "wildcard_kmer", "filled_kmer", "window_index", "snp_index", "type", "allele", "coef", "pval"
+    "wildcard_kmer", "filled_kmer", "window_index", "snp_index", "type", "allele", "coef", "pval", "absolute_pos"
     ])
     print(df.to_csv(sep="\t", index=False))
+    
+    
+    
+def plot_aff_motif_effects(rows, save_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    df = pd.DataFrame(rows, columns=[
+        "wildcard_kmer", "filled_kmer", "window_index", "snp_index",
+        "type", "allele", "coef", "pval", "absolute_pos"
+    ])
+
+    df = df[df["type"] == "AFF"].copy()
+    df["coef"] = pd.to_numeric(df["coef"], errors="coerce")
+    df["pval"] = pd.to_numeric(df["pval"], errors="coerce")
+    df["-log10(pval)"] = -np.log10(df["pval"])
+    df["absolute_position"] = df["window_index"] + df["snp_index"] + 1
+    region_length = df["absolute_position"].max()
+
+    allele_colors = {
+        "A": "black", "C": "red", "G": "green", "T": "blue"
+    }
+
+    fig_width = max(12, region_length * 0.15)
+    fig, axs = plt.subplots(2, 1, figsize=(fig_width, 6), sharex=True)
+
+    for metric, ax in zip(["coef", "-log10(pval)"], axs):
+        for _, row in df.iterrows():
+            x = int(row["absolute_position"])
+            y = row[metric]
+            allele = row["allele"]
+            color = allele_colors.get(allele, "gray")
+            if pd.notna(y):
+                ax.text(x, y, allele, color=color, fontsize=12, ha="center", va="center", fontweight="bold")
+
+        ymin = df[metric].min()
+        ymax = df[metric].max()
+        yrange = ymax - ymin if ymax != ymin else 1
+        padding = yrange * 0.1
+        ax.set_ylim(ymin - padding, ymax + padding)
+        ax.set_ylabel(metric)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    axs[1].set_xlabel("Genomic Position")
+    axs[0].set_title("Motif Scan: Coefficients and -log10(p-values)")
+
+    step = 10 if region_length > 80 else 5 if region_length > 40 else 1
+    axs[1].set_xticks(range(1, region_length + 1, step))
+    axs[1].set_xlim(0.5, region_length + 0.5)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    print(f"[Info] Figure saved to: {save_path}")
