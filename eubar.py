@@ -7,6 +7,7 @@ from utils import (
         get_mutation_sequence,
         analyze_motif_effects, 
         print_motif_effect_table,
+        determine_num_random
     )
 
 def main():
@@ -18,6 +19,9 @@ def main():
     parser.add_argument("--kmer_size", type=int, default=8, help="K-mer length")
     parser.add_argument("--dhs", action="store_true", help="Include DHS-related covariates")
     parser.add_argument("--num-random", type=int, default=500, help="Number of random probes")
+    parser.add_argument("--use-percentage", action="store_true", help="Use percentage of total probes instead of fixed number")
+    parser.add_argument("--percentage", type=float, default=0.10, help="Percentage of probes to use when --use-percentage is set (0.10 = 10%)")
+
 
     args = parser.parse_args()
 
@@ -39,7 +43,15 @@ def main():
     # Used regions for random probe exclusion
     used_regions = set(kmers.keys())
 
+    num_random = determine_num_random(
+        kmers,
+        use_percentage=args.use_percentage,
+        percentage=args.percentage,
+        default=args.num_random
+    )
+
     for snv in args.snv_list.split(","):
+
         chrom, pos, refalt = snv.split(":")
         ref, alt = refalt.split(">")
         pos = int(pos)
@@ -53,7 +65,7 @@ def main():
             used_regions=used_regions,
             intensities=intensities,
             genome=genome,
-            num_random=args.num_random,
+            num_random=num_random,
             dhs=args.dhs
         )
 

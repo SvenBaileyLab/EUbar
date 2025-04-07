@@ -6,12 +6,16 @@ import statsmodels.api as sm
 from pyfaidx import Fasta
 import warnings
 from statsmodels.discrete.discrete_model import NegativeBinomial
+import hashlib
+
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 # warnings.filterwarnings("ignore", category=PerfectSeparationWarning)
 
+def deterministic_hash(string, max_val=2**32):
+    return int(hashlib.md5(string.encode()).hexdigest(), 16) % max_val
 
 def read_intensities(filepath):
     """
@@ -26,6 +30,17 @@ def read_intensities(filepath):
             region, value = line.split()
             intensities[region] = float(value)
     return intensities
+
+
+def determine_num_random(kmers, use_percentage=False, percentage=0.10, default=500):
+    if use_percentage:
+        total_regions = sum(len(v) for v in kmers.values())
+        num_random = int(total_regions * percentage)
+        # Optional: cap between reasonable bounds
+        num_random = max(100, min(1000, num_random))
+        return num_random
+    else:
+        return default
 
 
 def read_kmer_positions(file_path):
@@ -359,8 +374,8 @@ def run_aff_rand_regression(
     rand_stats = run_regression(
         rand_matrix, rand_values, mode=mode, extra_covariates=rand_covars
     )
-    print(f"Number of matched probes: {len(aff_values)}")
-    print(f"Number of matched random probes: {len(rand_values)}")
+    # print(f"Number of matched probes: {len(aff_values)}")
+    # print(f"Number of matched random probes: {len(rand_values)}")
     return aff_stats, rand_stats
 
 
@@ -389,7 +404,7 @@ def analyze_motif_effects(
     )
 
     # Step 3: select and split random probes ONCE per SNP
-    rand_seed = hash(snv) % (2**32)
+    rand_seed = deterministic_hash(snv)
     rand_probes = select_random_probes(kmers, used_regions, num_random=num_random, seed=rand_seed)
     split_random = project_kmers_to_random_probes(rand_probes, wildcard_variants, kmer_list, kmers)
 
@@ -411,7 +426,7 @@ def analyze_motif_effects(
                 intensities,
                 comp_alleles=comp_block,
                 dhs=dhs,
-                mode="neg-binomial"
+                mode=mode
             )
 
             regression_results[motif_pos] = {
