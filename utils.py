@@ -253,7 +253,7 @@ def run_regression(
         X_cols.append(values)
         covariate_names.append(name)
 
-    dump_glm_inputs("glm_vectors.txt", allele_matrix, y, extra_covariates)
+    # dump_glm_inputs("glm_vectors.txt", allele_matrix, y, extra_covariates)
 
     X = np.column_stack(X_cols)
     X = sm.add_constant(X)
@@ -359,8 +359,8 @@ def run_aff_rand_regression(
     rand_stats = run_regression(
         rand_matrix, rand_values, mode=mode, extra_covariates=rand_covars
     )
-    # print(f"Number of matched probes: {len(aff_values)}")
-    # print(f"Number of matched random probes: {len(rand_values)}")
+    print(f"Number of matched probes: {len(aff_values)}")
+    print(f"Number of matched random probes: {len(rand_values)}")
     return aff_stats, rand_stats
 
 
