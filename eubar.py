@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--num-random", type=int, default=500, help="Number of random probes")
     parser.add_argument("--use-percentage", action="store_true", help="Use percentage of total probes instead of fixed number")
     parser.add_argument("--percentage", type=float, default=0.10, help="Percentage of probes to use when --use-percentage is set (0.10 = 10%)")
-
+    parser.add_argument("--mode", type=str, default="neg-binomial", help="Model mode for regression (default: neg-binomial)")
 
     args = parser.parse_args()
 
@@ -66,7 +66,8 @@ def main():
             intensities=intensities,
             genome=genome,
             num_random=num_random,
-            dhs=args.dhs
+            dhs=args.dhs,
+            mode=args.mode
         )
 
         print_motif_effect_table(
