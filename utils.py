@@ -15,10 +15,11 @@ import matplotlib.pyplot as plt
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
-# warnings.filterwarnings("ignore", category=PerfectSeparationWarning)
+
 
 def get_sequence_from_fasta(chrom, start, end, genome_fasta_path):
     from pyfaidx import Fasta
+
     """
     Extracts the DNA sequence from a given genomic region.
 
@@ -32,8 +33,9 @@ def get_sequence_from_fasta(chrom, start, end, genome_fasta_path):
         str: The DNA sequence from the region
     """
     genome = Fasta(genome_fasta_path)
-    sequence = genome[chrom][start - 1:end].seq.upper()
+    sequence = genome[chrom][start - 1 : end].seq.upper()
     return sequence
+
 
 def deterministic_hash(string, max_val=2**32):
     return int(hashlib.md5(string.encode()).hexdigest(), 16) % max_val
@@ -95,6 +97,7 @@ def read_kmer_positions(file_path):
 
     return result
 
+
 def get_all_kmer_wildcards(kmer_seq):
     """
     Given a k-mer sequence, return:
@@ -104,9 +107,10 @@ def get_all_kmer_wildcards(kmer_seq):
     for i in range(len(kmer_seq)):
         wildcard = list(kmer_seq)
         wildcard[i] = "."
-        wildcard_kmer = ''.join(wildcard)
+        wildcard_kmer = "".join(wildcard)
         wildcard_variants[i] = wildcard_kmer
     return wildcard_variants
+
 
 def get_kmer_variants(motif_seed, kmer_size):
     """
@@ -138,7 +142,9 @@ def get_kmer_variants(motif_seed, kmer_size):
     return kmer_list, wildcard_variants, snp_indices
 
 
-def match_kmers_to_wildcards(kmer_positions, wildcard_variants, snp_indices, motif_seed):
+def match_kmers_to_wildcards(
+    kmer_positions, wildcard_variants, snp_indices, motif_seed
+):
     matched = {}
     comp_alleles = {}
 
@@ -159,6 +165,7 @@ def match_kmers_to_wildcards(kmer_positions, wildcard_variants, snp_indices, mot
         comp_alleles[motif_pos] = {snp_index: ref_allele}
 
     return comp_alleles, matched
+
 
 def match_all_kmers_to_wildcards(kmer_positions, wildcard_variants):
     """
@@ -259,13 +266,13 @@ def build_allele_matrix(matched, probe_intensities, exclude_alleles=None):
 def project_kmers_to_random_probes(rand_probes, wildcard_variants, kmer_list, kmers):
     projected = defaultdict(lambda: defaultdict(dict))
     bases = ["A", "C", "G", "T"]
-    
+
     for motif_pos, wildcard in wildcard_variants.items():
         for snp_index in range(len(kmer_list[0])):  # all kmers are same length
             if wildcard[snp_index] != ".":
                 continue  # skip if not SNP site
             for base in bases:
-                variant_kmer = wildcard[:snp_index] + base + wildcard[snp_index+1:]
+                variant_kmer = wildcard[:snp_index] + base + wildcard[snp_index + 1 :]
                 if variant_kmer not in kmers:
                     continue
                 for region, offset in kmers[variant_kmer].items():
@@ -356,12 +363,12 @@ def run_regression(
 
 
 def regression_driver(
-    probe_dict, 
-    probe_intensities, 
+    probe_dict,
+    probe_intensities,
     exclude_ref_allele=False,
-    comp_alleles=None, 
-    dhs=False, 
-    mode="neg-binomial"
+    comp_alleles=None,
+    dhs=False,
+    mode="neg-binomial",
 ):
     """
     Generalized regression function for either AFF or RAND.
@@ -377,6 +384,7 @@ def regression_driver(
     Returns:
         dict: Regression stats per allele
     """
+
     def extract_covariates(regions, region_to_kmer_pos):
         lp = []
         sl = []
@@ -419,173 +427,16 @@ def regression_driver(
     return stats
 
 
-def _run_aff_rand_regression(
-    matched, random, probe_intensities, comp_alleles,
-    dhs=False, mode="neg-binomial"
-):
-    """
-    Run regression for matched (AFF) and random (RAND) probes.
-
-    Args:
-        matched (dict): output from match_kmers_to_wildcards
-        random (dict): output from split_random_probes_across_alleles
-        probe_intensities (dict): region -> intensity
-        comp_alleles (dict): {motif_pos: {snp_index: ref_allele}}
-        dhs (bool): whether to include sl covariate
-        mode (str): regression mode
-
-    Returns:
-        (aff_stats, rand_stats): regression results
-    """
-
-    def extract_covariates(regions, region_to_kmer_pos):
-        lp = []
-        sl = []
-        for region in regions:
-            chrom, coords = region.split(":")
-            start, end = map(int, coords.split("-"))
-            size = end - start
-            kmer_pos = region_to_kmer_pos.get(region, 0)
-            lp_val = kmer_pos / size if size > 0 else 0.5
-            lp.append(lp_val)
-            sl.append(size)
-        return lp, sl
-
-    motif_pos = list(matched.keys())[0]
-    snp_index = list(matched[motif_pos].keys())[0]
-    ref_allele = comp_alleles[motif_pos][snp_index]
-
-    # === AFF setup ===
-    aff_matrix, aff_values, aff_used = build_allele_matrix(
-        matched, probe_intensities, exclude_alleles={ref_allele}
-    )
-
-    aff_kmer_pos = {
-        r: matched[motif_pos][snp_index][allele][r]
-        for allele in matched[motif_pos][snp_index]
-        for r in matched[motif_pos][snp_index][allele]
-    }
-
-    aff_lp, aff_sl = extract_covariates(aff_used, aff_kmer_pos)
-
-    aff_covars = {"lp": aff_lp}
-    if dhs:
-        aff_covars["sl"] = aff_sl
-
-    aff_stats = run_regression(
-        aff_matrix, aff_values, mode=mode, extra_covariates=aff_covars
-    )
-
-    # === RAND setup (keep all alleles) ===
-    rand_matrix, rand_values, rand_used = build_allele_matrix(random, probe_intensities)
-
-    rand_kmer_pos = {
-        r: random[motif_pos][snp_index][allele][r]
-        for allele in random[motif_pos][snp_index]
-        for r in random[motif_pos][snp_index][allele]
-    }
-
-    rand_lp, rand_sl = extract_covariates(rand_used, rand_kmer_pos)
-
-    rand_covars = {"lp": rand_lp}
-    if dhs:
-        rand_covars["sl"] = rand_sl
-
-    rand_stats = run_regression(
-        rand_matrix, rand_values, mode=mode, extra_covariates=rand_covars
-    )
-    # print(f"Number of matched probes: {len(aff_values)}")
-    # print(f"Number of matched random probes: {len(rand_values)}")
-    return aff_stats, rand_stats
-
-
-def _run_aff_rand_regression_scan(
-    matched, random, probe_intensities, dhs=False, mode="neg-binomial"
-):
-    """
-    Run regression for matched (AFF) and random (RAND) probes without excluding any allele.
-
-    Used for genome-wide scanning, where the reference allele is not privileged.
-
-    Args:
-        matched (dict): output from match_kmers_to_wildcards
-        random (dict): output from project_kmers_to_random_probes
-        probe_intensities (dict): region -> intensity
-        dhs (bool): whether to include sl covariate
-        mode (str): regression mode
-
-    Returns:
-        (aff_stats, rand_stats): regression results
-    """
-
-    def extract_covariates(regions, region_to_kmer_pos):
-        lp = []
-        sl = []
-        for region in regions:
-            chrom, coords = region.split(":")
-            start, end = map(int, coords.split("-"))
-            size = end - start
-            kmer_pos = region_to_kmer_pos.get(region, 0)
-            lp_val = kmer_pos / size if size > 0 else 0.5
-            lp.append(lp_val)
-            sl.append(size)
-        return lp, sl
-
-    motif_pos = list(matched.keys())[0]
-    snp_index = list(matched[motif_pos].keys())[0]
-
-    # === AFF setup (keep all alleles!) ===
-    aff_matrix, aff_values, aff_used = build_allele_matrix(
-        matched, probe_intensities  # <- DO NOT exclude reference
-    )
-
-    aff_kmer_pos = {
-        r: matched[motif_pos][snp_index][allele][r]
-        for allele in matched[motif_pos][snp_index]
-        for r in matched[motif_pos][snp_index][allele]
-    }
-
-    aff_lp, aff_sl = extract_covariates(aff_used, aff_kmer_pos)
-    aff_covars = {"lp": aff_lp}
-    if dhs:
-        aff_covars["sl"] = aff_sl
-
-    aff_stats = run_regression(
-        aff_matrix, aff_values, mode=mode, extra_covariates=aff_covars
-    )
-
-    # === RAND setup (also keep all alleles) ===
-    rand_matrix, rand_values, rand_used = build_allele_matrix(
-        random, probe_intensities
-    )
-
-    rand_kmer_pos = {
-        r: random[motif_pos][snp_index][allele][r]
-        for allele in random[motif_pos][snp_index]
-        for r in random[motif_pos][snp_index][allele]
-    }
-
-    rand_lp, rand_sl = extract_covariates(rand_used, rand_kmer_pos)
-    rand_covars = {"lp": rand_lp}
-    if dhs:
-        rand_covars["sl"] = rand_sl
-
-    rand_stats = run_regression(
-        rand_matrix, rand_values, mode=mode, extra_covariates=rand_covars
-    )
-
-    return aff_stats, rand_stats
-
 def analyze_motif_effects(
-    snv, 
-    kmers, 
+    snv,
+    kmers,
     kmer_size,
-    used_regions, 
-    intensities, 
+    used_regions,
+    intensities,
     genome,
     num_random=500,
     dhs=False,
-    mode="neg-binomial"
+    mode="neg-binomial",
 ):
     chrom, pos, refalt = snv.split(":")
     ref, alt = refalt.split(">")
@@ -602,8 +453,12 @@ def analyze_motif_effects(
 
     # Step 3: select and split random probes ONCE per SNP
     rand_seed = deterministic_hash(snv)
-    rand_probes = select_random_probes(kmers, used_regions, num_random=num_random, seed=rand_seed)
-    split_random = project_kmers_to_random_probes(rand_probes, wildcard_variants, kmer_list, kmers)
+    rand_probes = select_random_probes(
+        kmers, used_regions, num_random=num_random, seed=rand_seed
+    )
+    split_random = project_kmers_to_random_probes(
+        rand_probes, wildcard_variants, kmer_list, kmers
+    )
 
     # Step 4: run regression for each motif position
     regression_results = {}
@@ -613,7 +468,7 @@ def analyze_motif_effects(
             ref_allele = comp_alleles[motif_pos][snp_index]
 
             matched_block = {motif_pos: {snp_index: matched[motif_pos]}}
-            comp_block    = {motif_pos: {snp_index: ref_allele}}
+            comp_block = {motif_pos: {snp_index: ref_allele}}
 
             # === AFF: exclude ref allele ===
             aff_stats = regression_driver(
@@ -622,7 +477,7 @@ def analyze_motif_effects(
                 exclude_ref_allele=True,
                 comp_alleles=comp_block,
                 dhs=dhs,
-                mode=mode
+                mode=mode,
             )
 
             # === RAND: keep all alleles, handle failures ===
@@ -634,7 +489,7 @@ def analyze_motif_effects(
                     exclude_ref_allele=False,
                     comp_alleles=comp_block,
                     dhs=dhs,
-                    mode=mode
+                    mode=mode,
                 )
             except KeyError:
                 rand_stats = {}
@@ -644,10 +499,7 @@ def analyze_motif_effects(
                     f"Consider increasing `num_random` above {num_random} to reduce missing data."
                 )
 
-            regression_results[motif_pos] = {
-                "aff": aff_stats,
-                "rand": rand_stats
-            }
+            regression_results[motif_pos] = {"aff": aff_stats, "rand": rand_stats}
 
     return regression_results
 
@@ -677,7 +529,9 @@ def print_motif_effect_table(snv, chrom, pos, motif, results):
 
             pos_str = ",".join(map(str, positions))
             coef_str = ",".join(f"{x:.7g}" for x in coefs)
-            pval_str = ",".join(f"{x:.7g}" if isinstance(x, float) else x for x in pvals)
+            pval_str = ",".join(
+                f"{x:.7g}" if isinstance(x, float) else x for x in pvals
+            )
 
             print(f"{group}\t{snv}\t{allele}\t{pos_str}\t{coef_str}\t{pval_str}")
 
@@ -705,7 +559,9 @@ def get_mutation_sequence(chrom, pos, ref_allele, genome_fasta_path, flank=8):
     # Optional: check the reference matches
     center_base = genome[chrom][pos - 1].seq.upper()
     if center_base != ref_allele:
-        raise ValueError(f"Reference allele mismatch at {chrom}:{pos}: expected {ref_allele}, found {center_base}")
+        raise ValueError(
+            f"Reference allele mismatch at {chrom}:{pos}: expected {ref_allele}, found {center_base}"
+        )
 
     return seq
 
@@ -736,7 +592,21 @@ def fix_random_block_structure(rand_probes, pos):
         }
     }
 
-def print_rows_as_tsv(rows, header=("wildcard_kmer", "filled_kmer", "window_index", "snp_index", "type", "allele", "coef", "pval", "absolute_pos")):
+
+def print_rows_as_tsv(
+    rows,
+    header=(
+        "wildcard_kmer",
+        "filled_kmer",
+        "window_index",
+        "snp_index",
+        "type",
+        "allele",
+        "coef",
+        "pval",
+        "absolute_pos",
+    ),
+):
     """
     Print a list of rows as a TSV to stdout, replacing NaNs with "NaN" string explicitly.
 
@@ -756,20 +626,41 @@ def print_rows_as_tsv(rows, header=("wildcard_kmer", "filled_kmer", "window_inde
                 formatted.append(item)
         df_rows.append(formatted)
 
-    df = pd.DataFrame(df_rows, columns=[
-    "wildcard_kmer", "filled_kmer", "window_index", "snp_index", "type", "allele", "coef", "pval", "absolute_pos"
-    ])
+    df = pd.DataFrame(
+        df_rows,
+        columns=[
+            "wildcard_kmer",
+            "filled_kmer",
+            "window_index",
+            "snp_index",
+            "type",
+            "allele",
+            "coef",
+            "pval",
+            "absolute_pos",
+        ],
+    )
     print(df.to_csv(sep="\t", index=False))
-    
-    
-    
+
+
 def plot_aff_motif_effects(rows, save_path):
     import matplotlib
+
     matplotlib.use("Agg")
-    df = pd.DataFrame(rows, columns=[
-        "wildcard_kmer", "filled_kmer", "window_index", "snp_index",
-        "type", "allele", "coef", "pval", "absolute_pos"
-    ])
+    df = pd.DataFrame(
+        rows,
+        columns=[
+            "wildcard_kmer",
+            "filled_kmer",
+            "window_index",
+            "snp_index",
+            "type",
+            "allele",
+            "coef",
+            "pval",
+            "absolute_pos",
+        ],
+    )
 
     df = df[df["type"] == "AFF"].copy()
     df["coef"] = pd.to_numeric(df["coef"], errors="coerce")
@@ -778,9 +669,7 @@ def plot_aff_motif_effects(rows, save_path):
     df["absolute_position"] = df["window_index"] + df["snp_index"] + 1
     region_length = df["absolute_position"].max()
 
-    allele_colors = {
-        "A": "black", "C": "red", "G": "green", "T": "blue"
-    }
+    allele_colors = {"A": "black", "C": "red", "G": "green", "T": "blue"}
 
     fig_width = max(12, region_length * 0.15)
     fig, axs = plt.subplots(2, 1, figsize=(fig_width, 6), sharex=True)
@@ -792,7 +681,16 @@ def plot_aff_motif_effects(rows, save_path):
             allele = row["allele"]
             color = allele_colors.get(allele, "gray")
             if pd.notna(y):
-                ax.text(x, y, allele, color=color, fontsize=12, ha="center", va="center", fontweight="bold")
+                ax.text(
+                    x,
+                    y,
+                    allele,
+                    color=color,
+                    fontsize=12,
+                    ha="center",
+                    va="center",
+                    fontweight="bold",
+                )
 
         ymin = df[metric].min()
         ymax = df[metric].max()
