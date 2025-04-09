@@ -5,3 +5,4 @@ pybedtools==0.9.0
 pyfaidx==0.8.1.1
 pytest==7.4.0
 statsmodels==0.14.1
+pyBigWig==0.3.18

@@ -81,7 +81,11 @@ def main():
         for motif_pos in matched:
             for allele in matched[motif_pos]:
                 matched_block = {
-                    motif_pos: {motif_pos: {allele: matched[motif_pos][allele]}}
+                    motif_pos: {
+                        motif_pos: {
+                            allele: matched[motif_pos][allele]
+                            }
+                        }
                 }
 
                 try:

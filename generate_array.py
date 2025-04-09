@@ -1,8 +1,9 @@
 import argparse
 from pyfaidx import Fasta
 from collections import defaultdict
-import re
 import itertools
+from numba import njit
+import numpy as np
 
 
 def parse_bed(file_path):
@@ -17,15 +18,39 @@ def parse_bed(file_path):
             yield chrom, start, end
 
 
+@njit
+def is_valid_kmer(kmer):
+    for c in kmer:
+        if c not in "ACGT":
+            return False
+    return True
+
+
+@njit
+def extract_kmers_array(seq, kmer_size):
+    """
+    Fast Numba-based function: returns list of (kmer, offset) pairs.
+    """
+    seq = seq.upper()
+    max_i = len(seq) - kmer_size + 1
+    result = []
+
+    for i in range(max_i):
+        kmer = seq[i:i + kmer_size]
+        if is_valid_kmer(kmer):
+            result.append((kmer, i))
+
+    return result
+
+
 def extract_kmers_from_sequence(seq, region_str, kmer_size):
     """
-    Returns a dictionary of {kmer: [offsets]} within a region.
+    Wrapper around Numba-accelerated version. Returns dict of {kmer: [offsets]}.
     """
     found = defaultdict(list)
-    for i in range(len(seq) - kmer_size + 1):
-        kmer = seq[i : i + kmer_size].upper()
-        if re.fullmatch("[ACGT]+", kmer):
-            found[kmer].append(i)
+    result = extract_kmers_array(seq, kmer_size)
+    for kmer, offset in result:
+        found[kmer].append(offset)
     return found
 
 
@@ -49,29 +74,30 @@ def verify_kmers(all_kmers_dict, kmer_size):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate k-mer index from ATAC/DNase-seq BED and genome FASTA."
+        description="Generate k-mer index from ATAC/DNase-seq BED and genome FASTA (Numba accelerated)."
     )
-    parser.add_argument(
-        "--bed",
-        required=True,
-        help="Input BED file with regions (e.g., DNase/ATAC-seq peaks)",
-    )
-    parser.add_argument(
-        "--genome", required=True, help="Reference genome in FASTA format"
-    )
-    parser.add_argument(
-        "--kmer_size", type=int, default=8, help="Length of k-mers to extract"
-    )
-    parser.add_argument(
-        "--output", required=True, help="Output file for the k-mer index"
-    )
+    parser.add_argument("--bed", required=True, help="Input BED file")
+    parser.add_argument("--genome", required=True, help="Reference genome in FASTA format")
+    parser.add_argument("--kmer_size", type=int, default=8, help="Length of k-mers to extract")
+    parser.add_argument("--output", required=True, help="Output file for the k-mer index")
 
     args = parser.parse_args()
-
+    
     fasta = Fasta(args.genome)
     all_kmers = defaultdict(list)
 
+    seen_regions = set()
+    total_regions = 0
+    skipped_duplicates = 0
+
     for chrom, start, end in parse_bed(args.bed):
+        total_regions += 1
+        region_key = (chrom, start, end)
+        if region_key in seen_regions:
+            skipped_duplicates += 1
+            continue
+        seen_regions.add(region_key)
+
         region_str = f"{chrom}:{start}-{end}"
         try:
             seq = fasta[chrom][start:end].seq
@@ -92,6 +118,7 @@ def main():
             out.write(index_line + "\n")
 
     print(f"[Done] K-mer index written to {args.output}")
+    print(f"[Summary] Processed {len(seen_regions)} unique regions (skipped {skipped_duplicates} duplicates from {total_regions} lines)")
     verify_kmers(all_kmers, args.kmer_size)
 
 
