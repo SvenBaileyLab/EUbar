@@ -69,12 +69,13 @@ def determine_num_random(kmers, use_percentage=False, percentage=0.10, default=5
 
 def read_kmer_positions(file_path):
     """
-    Reads k-mer positions and handles multiple offsets per region.
+    Reads k-mer positions and labels each offset with .1, .2, ... (starting from 1),
+    even for the first occurrence.
     Output:
         {
             "CTGAACTT": {
-                "chr14:23094440-23096032": 1433,
-                "chr14:23094440-23096032.1": 1569,
+                "chr14:23094440-23096032.1": 1433,
+                "chr14:23094440-23096032.2": 1569,
                 ...
             }
         }
@@ -90,12 +91,77 @@ def read_kmer_positions(file_path):
                 region, count, offsets = entry.split(";")
                 offset_list = offsets.strip().split()
 
-                for i, offset in enumerate(offset_list):
-                    suffix = f".{i}" if i > 0 else ""
-                    region_id = f"{region}{suffix}"
-                    result[kmer][region_id] = int(offset)
+                if len(offset_list) == 1:
+                    # Only one match, use region name directly
+                    result[kmer][region] = int(offset_list[0])
+                else:
+                    # Multiple matches, use .1, .2, ...
+                    for i, offset in enumerate(offset_list, start=1):
+                        region_id = f"{region}.{i}"
+                        result[kmer][region_id] = int(offset)
 
     return result
+
+def read_unique_kmer_positions(file_path):
+    """
+    Reads k-mer positions and retains only regions where the k-mer occurs exactly once (count == 1).
+
+    Input format:
+        kmer<TAB>region1;count1;offsets1,region2;count2;offsets2,...
+
+    Output:
+        {
+            "CTGAACTT": {
+                "chr14:23094440-23096032": 1433,
+                ...
+            }
+        }
+    """
+    result = {}
+
+    with open(file_path) as f:
+        for line in f:
+            kmer, entries = line.strip().split("\t")
+            result[kmer] = {}
+
+            for entry in entries.strip(",").split(","):
+                try:
+                    region, count, offsets = entry.split(";")
+                    if int(count) != 1:
+                        continue  # skip if there are multiple matches
+                    offset = int(offsets.strip())
+                    result[kmer][region] = offset
+                except ValueError:
+                    continue  # skip malformed lines
+
+            if not result[kmer]:
+                del result[kmer]  # remove empty kmer entries
+
+    return result
+
+
+def _filter_unique_kmer_hits(kmer_positions):
+    """
+    Removes k-mer entries that map to the same region more than once (i.e., with .1, .2, etc.).
+    Keeps only base regions that appear exactly once.
+    """
+    filtered = {}
+
+    for kmer, region_dict in kmer_positions.items():
+        # Count base regions
+        base_counts = {}
+        for region_id in region_dict:
+            base = region_id.split(".")[0]
+            base_counts[base] = base_counts.get(base, 0) + 1
+
+        # Now filter to keep only base regions with count == 1
+        filtered[kmer] = {
+            region_id: offset
+            for region_id, offset in region_dict.items()
+            if base_counts[region_id.split(".")[0]] == 1
+        }
+
+    return filtered
 
 
 def get_all_kmer_wildcards(kmer_seq):
@@ -189,6 +255,39 @@ def match_all_kmers_to_wildcards(kmer_positions, wildcard_variants):
 
     return matched
 
+def scan_motif_kmers(region_seq, kmer_size, kmer_positions):
+    """
+    Slides a k-mer window across the sequence and builds:
+    - allele_region_offsets[motif_pos][snv_index][allele][region_id] = offset
+    - allele_matched_kmers[motif_pos][snv_index][allele] = list of (wildcard_kmer, matched_kmer)
+
+    Returns:
+        (allele_region_offsets, allele_matched_kmers)
+    """
+
+    allele_region_offsets = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    allele_matched_kmers = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+    for motif_pos in range(len(region_seq) - kmer_size + 1):
+        kmer = region_seq[motif_pos:motif_pos + kmer_size]
+
+        for snv_index in range(kmer_size):
+            # Create wildcarded k-mer
+            wildcard_kmer = list(kmer)
+            wildcard_kmer[snv_index] = "."
+            wildcard_kmer = "".join(wildcard_kmer)
+
+            for base in "ACGT":
+                filled_kmer = list(kmer)
+                filled_kmer[snv_index] = base
+                filled_kmer = "".join(filled_kmer)
+
+                if filled_kmer in kmer_positions:
+                    for region_id, offset in kmer_positions[filled_kmer].items():
+                        allele_region_offsets[motif_pos][snv_index][base][region_id] = offset
+                        allele_matched_kmers[motif_pos][snv_index][base].append((wildcard_kmer, filled_kmer))
+
+    return allele_region_offsets, allele_matched_kmers
 
 def select_random_probes(kmer_positions, matched_probes, num_random=500, seed=43020):
     """
@@ -303,6 +402,18 @@ def dump_glm_inputs(outfile, allele_matrix, y, extra_covariates):
             y = y.tolist()
         f.write("y: " + " ".join(map(str, y)) + "\n")
 
+def extract_covariates(regions, region_to_kmer_pos):
+    lp = []
+    sl = []
+    for region in regions:
+        chrom, coords = region.split(":")
+        start, end = map(int, coords.split("-"))
+        size = end - start
+        kmer_pos = region_to_kmer_pos.get(region, 0)
+        lp_val = kmer_pos / size if size > 0 else 0.5
+        lp.append(lp_val)
+        sl.append(size)
+    return lp, sl
 
 def run_regression(
     allele_matrix, probe_values, mode="neg-binomial", extra_covariates=None
@@ -361,6 +472,79 @@ def run_regression(
 
     return stats
 
+def run_snv_regression(
+    motif_pos,
+    snv_index,
+    allele_region_offsets,
+    allele_matched_kmers,
+    intensities,
+    model_type="nb",
+    include_covariates=True,
+):
+    rows = []
+    alleles = allele_region_offsets[motif_pos][snv_index]
+    all_regions = set()
+    for region_dict in alleles.values():
+        all_regions.update(region_dict.keys())
+
+    design = []
+    y_values = []
+    region_list = []
+
+    for region in all_regions:
+        row = {a: 0 for a in alleles}
+        for a in alleles:
+            if region in alleles[a]:
+                row[a] = 1
+        if region in intensities:
+            design.append(row)
+            y_values.append(intensities[region])
+            region_list.append(region)
+
+    if not design:
+        return []
+
+    X = pd.DataFrame(design)
+    y = pd.Series(y_values, index=region_list)
+    X.index = y.index
+
+    if include_covariates:
+        kmer_pos = {
+            region: allele_region_offsets[motif_pos][snv_index][allele][region]
+            for allele in allele_region_offsets[motif_pos][snv_index]
+            for region in allele_region_offsets[motif_pos][snv_index][allele]
+        }
+        lp, sl = extract_covariates(region_list, kmer_pos)
+        X["lp"] = lp
+        X["sl"] = sl
+
+    X_const = sm.add_constant(X)
+
+    if model_type == "ols":
+        model = sm.OLS(y.apply(math.log1p), X_const)
+    else:
+        model = sm.GLM(y, X_const, family=sm.families.NegativeBinomial())
+
+    results = model.fit()
+
+    for allele in alleles:
+        coef = results.params.get(allele, math.nan)
+        pval = results.pvalues.get(allele, math.nan)
+        for wildcard_kmer, filled_kmer in set(allele_matched_kmers[motif_pos][snv_index][allele]):
+            row = [
+                wildcard_kmer,
+                filled_kmer,
+                motif_pos,
+                snv_index,
+                "AFF",
+                allele,
+                coef,
+                pval,
+                motif_pos + snv_index,
+            ]
+            rows.append(row)
+
+    return rows
 
 def regression_driver(
     probe_dict,
