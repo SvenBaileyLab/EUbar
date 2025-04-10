@@ -6,7 +6,8 @@ from utils import (
     get_sequence_from_fasta,
     print_rows_as_tsv,
     plot_aff_motif_effects,
-    run_snv_regression
+    run_snv_regression,
+    reverse_complement
 )
 
 def main():
@@ -19,6 +20,7 @@ def main():
     parser.add_argument("--mode", choices=["nb", "ols"], default="nb", help="Regression mode (nb or ols)")
     parser.add_argument("--no-covariates", action="store_true", help="Disable lp and sl covariates")
     parser.add_argument("--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)")
+    parser.add_argument("--reverse", action='store_true', help="Use reverse complement of the sequence")
     args = parser.parse_args()
 
     intensities = read_intensities(args.intensities)
@@ -27,6 +29,8 @@ def main():
     chrom, coords = args.region.split(":")
     start, end = map(int, coords.split("-"))
     region_seq = get_sequence_from_fasta(chrom, start, end, args.genome)
+    if args.reverse:
+        region_seq = reverse_complement(region_seq)
 
     allele_region_offsets, allele_matched_kmers = scan_motif_kmers(
         region_seq=region_seq,
