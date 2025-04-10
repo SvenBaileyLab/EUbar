@@ -70,3 +70,5 @@ Desktop.ini
 *.local
 
 data/*
+retired/*
+tests/*

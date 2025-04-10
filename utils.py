@@ -17,6 +17,11 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 
+def reverse_complement(seq):
+    complement = str.maketrans("ACGTacgt", "TGCAtgca")
+    return seq.translate(complement)[::-1]
+
+
 def get_sequence_from_fasta(chrom, start, end, genome_fasta_path):
     from pyfaidx import Fasta
 
