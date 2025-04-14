@@ -145,6 +145,46 @@ def read_unique_kmer_positions(file_path):
     return result
 
 
+def read_unique_kmer_positions_safe(file_path, max_kmers=None):
+    """
+    Reads k-mer positions and retains only regions where the k-mer occurs exactly once (count == 1).
+    Returns a nested dict: {kmer: {region: offset}}.
+
+    Optionally stops early if max_kmers is provided (for testing/debug).
+    """
+    result = {}
+    kmer_count = 0
+
+    with open(file_path) as f:
+        for line_num, line in enumerate(f):
+            try:
+                kmer, entries = line.strip().split("\t")
+            except ValueError:
+                continue  # skip malformed lines
+
+            regions = {}
+
+            for entry in entries.strip(",").split(","):
+                try:
+                    region, count, offsets = entry.split(";")
+                    if int(count) != 1:
+                        continue
+                    offset = int(offsets.strip())
+                    regions[region] = offset
+                except ValueError:
+                    continue
+
+            if regions:
+                result[kmer] = regions
+                kmer_count += 1
+
+            if max_kmers and kmer_count >= max_kmers:
+                print(f"[Info] Hit max_kmers={max_kmers} at line {line_num}")
+                break
+
+    return result
+
+
 def _filter_unique_kmer_hits(kmer_positions):
     """
     Removes k-mer entries that map to the same region more than once (i.e., with .1, .2, etc.).

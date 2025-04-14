@@ -54,22 +54,22 @@ def extract_kmers_from_sequence(seq, region_str, kmer_size):
     return found
 
 
-def generate_all_kmers(k):
-    return {"".join(p) for p in itertools.product("ACGT", repeat=k)}
-
-
 def verify_kmers(all_kmers_dict, kmer_size):
-    expected_kmers = generate_all_kmers(kmer_size)
     actual_kmers = set(all_kmers_dict.keys())
-    missing = expected_kmers - actual_kmers
+    missing_count = 0
+    max_print = 10
 
-    if not missing:
+    for kmer_tuple in itertools.product("ACGT", repeat=kmer_size):
+        kmer = "".join(kmer_tuple)
+        if kmer not in actual_kmers:
+            if missing_count < max_print:
+                print(f"Missing: {kmer}")
+            missing_count += 1
+
+    if missing_count == 0:
         print(f"All kmers represented! N={len(actual_kmers)}")
     else:
-        print(f"WARNING - Only {len(actual_kmers)} kmers found!!")
-        print("Missing kmers:")
-        for kmer in sorted(missing):
-            print(kmer)
+        print(f"WARNING - {len(actual_kmers)} kmers found. {missing_count} missing (showing first {min(missing_count, max_print)}).")
 
 
 def main():
@@ -82,13 +82,14 @@ def main():
     parser.add_argument("--output", required=True, help="Output file for the k-mer index")
 
     args = parser.parse_args()
-    
+
     fasta = Fasta(args.genome)
     all_kmers = defaultdict(list)
 
     seen_regions = set()
     total_regions = 0
     skipped_duplicates = 0
+    skipped_invalid = 0  
 
     for chrom, start, end in parse_bed(args.bed):
         total_regions += 1
@@ -108,6 +109,9 @@ def main():
         found_kmers = extract_kmers_from_sequence(seq, region_str, args.kmer_size)
 
         for kmer, offsets in found_kmers.items():
+            if not is_valid_kmer(kmer):
+                skipped_invalid += 1
+                continue
             all_kmers[kmer].append(
                 f"{region_str};{len(offsets)};{' '.join(str(i + 1) for i in offsets)}"
             )
@@ -118,6 +122,7 @@ def main():
             out.write(index_line + "\n")
 
     print(f"[Done] K-mer index written to {args.output}")
+    print(f"[Done] Skipped {skipped_invalid} k-mers with N or ambiguous bases")
     print(f"[Summary] Processed {len(seen_regions)} unique regions (skipped {skipped_duplicates} duplicates from {total_regions} lines)")
     verify_kmers(all_kmers, args.kmer_size)
 
