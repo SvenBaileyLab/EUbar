@@ -184,7 +184,7 @@ def save_meme_pwm(ppm, motif_name, out_file):
     print(f"Saved {out_file}")
 
 
-def build_pwm_by_alignment(kmer_means, threshold, seed_kmer, k):
+def _build_pwm_by_alignment(kmer_means, threshold, seed_kmer, k):
     top_kmers = [k for k, v in kmer_means.items() if v >= threshold]
     aligned_kmers = {}
 
@@ -225,6 +225,56 @@ def build_pwm_by_alignment(kmer_means, threshold, seed_kmer, k):
 
     return pd.DataFrame(pfm).fillna(0).T
 
+def build_pwm_by_alignment(kmer_means, threshold, seed_kmer, k, max_mismatches=0, min_overlap=4):
+    top_kmers = [k for k, v in kmer_means.items() if v >= threshold]
+    aligned_kmers = {}
+
+    for kmer in top_kmers:
+        rev = revcomp(kmer)
+        best_shift = None
+        best_score = -1
+        best_oriented = None
+
+        for candidate in [kmer, rev]:
+            for shift in range(-k + 1, k):
+                if shift < 0:
+                    seed_sub = seed_kmer[:k + shift]
+                    cand_sub = candidate[-shift:]
+                else:
+                    seed_sub = seed_kmer[shift:]
+                    cand_sub = candidate[:k - shift]
+
+                if len(seed_sub) < min_overlap:
+                    continue
+
+                if len(seed_sub) != len(cand_sub):
+                    continue
+
+                mismatches = hamming_distance(seed_sub, cand_sub)
+                if mismatches <= max_mismatches:
+                    score = len(seed_sub) - mismatches
+                    if score > best_score:
+                        best_score = score
+                        best_shift = shift
+                        best_oriented = candidate
+
+        if best_shift is not None:
+            aligned_kmers[best_oriented] = best_shift
+
+    min_shift = min(aligned_kmers.values())
+    max_shift = max(shift + k for shift in aligned_kmers.values())
+    window_len = max_shift - min_shift
+
+    pfm = [Counter({'A': 0, 'C': 0, 'G': 0, 'T': 0}) for _ in range(window_len)]
+
+    for kmer, shift in aligned_kmers.items():
+        for i, base in enumerate(kmer):
+            pfm_idx = shift - min_shift + i
+            if 0 <= pfm_idx < window_len:
+                pfm[pfm_idx][base] += 1
+
+    return pd.DataFrame(pfm).fillna(0).T
+
 # ----------------- MAIN -----------------
 
 def main():
@@ -243,6 +293,10 @@ def main():
     parser.add_argument("--outdir", default=".", help="Directory to save outputs (default: current dir)")
     parser.add_argument("--keep_stats", action='store_true', help="Save k-mer intensity stats to TSV")
     parser.add_argument("--method", choices=["seed", "align"], default="seed", help="Motif building method: seed (default) or align")
+    parser.add_argument("--align_mismatches", type=int, default=0, help="Max mismatches allowed in align mode")
+    parser.add_argument("--align_min_overlap", type=int, default=4, help="Min overlap required in align mode")
+
+
     args = parser.parse_args()
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
 
@@ -307,7 +361,8 @@ def main():
     if args.method == "align":
         seed_kmer = args.seed if args.seed else sorted(kmer_means.items(), key=lambda x: x[1], reverse=True)[0][0]
         print(f"\n=== Aligning around seed: {seed_kmer} ===")
-        pfm = build_pwm_by_alignment(kmer_means, args.thres, seed_kmer, args.kmer_size)
+        # pfm = build_pwm_by_alignment(kmer_means, args.thres, seed_kmer, args.kmer_size)
+        pfm = build_pwm_by_alignment(kmer_means, args.thres, seed_kmer, args.kmer_size, max_mismatches=args.align_mismatches, min_overlap=args.align_min_overlap)
         motif = seed_kmer
 
     else:
