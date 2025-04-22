@@ -152,7 +152,36 @@ def get_snv_aligned_wildcards(snv_info, kmer_size):
             wildcards.append((start, wildcard))
     return wildcards
 
-def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, debug=False):
+def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size):
+    allele_region_offsets = {}
+    matched_regions = set()
+    wildcards = get_snv_aligned_wildcards(snv_info, kmer_size)
+
+    for motif_pos, wildcard in wildcards:
+        pattern = re.compile("^" + wildcard.replace(".", "[ACGT]") + "$")
+        snv_index = wildcard.index(".")
+        region_to_alleles = {}
+        region_kmer_hits = {}
+
+        for kmer, region_dict in kmer_positions.items():
+            if pattern.fullmatch(kmer):
+                allele = kmer[snv_index]
+                for region_id, offset in region_dict.items():
+                    # track allele matches as before
+                    region_to_alleles.setdefault(region_id, set()).add(allele)
+                    region_kmer_hits.setdefault(region_id, {})[allele] = (offset, kmer)
+                    # NEW: collect matched regions
+                    matched_regions.add(region_id)
+
+        for region_id, alleles in region_to_alleles.items():
+            if len(alleles) == 1:
+                allele = next(iter(alleles))
+                offset, _ = region_kmer_hits[region_id][allele]
+                allele_region_offsets.setdefault(motif_pos, {}).setdefault(allele, {})[region_id] = offset
+
+    return allele_region_offsets, wildcards, matched_regions
+
+def _match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, debug=False):
     """
     Match k-mers from kmer_positions to SNV-aligned wildcards.
     Returns:
