@@ -1,3 +1,10 @@
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r".*A NumPy version >=.* and <.* is required for this version of SciPy.*",
+    category=UserWarning,
+)
+
 import re
 from collections import defaultdict
 import random
@@ -16,6 +23,36 @@ import sys
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+def wildcard_match(kmer, wildcard):
+    """
+    Returns True if the kmer matches the wildcard pattern (dot as any base).
+    Much faster than regex.
+    """
+    for k, w in zip(kmer, wildcard):
+        if w != "." and k != w:
+            return False
+    return True
+
+
+def wildcard_pos_from_offset(offset, j, kmer_size, is_reverse=False):
+    """Convert a k-mer start offset to the wildcard base position within the region.
+
+    offset: 0-based k-mer start within region
+    j:      wildcard index in forward k-mer coordinates
+    """
+    if offset is None:
+        return 0
+    if is_reverse:
+        return int(offset) + (kmer_size - 1 - int(j))
+    return int(offset) + int(j)
+
+
+def fold_lp_half(lp_val):
+    """Perl-style folding of lp into [0, 0.5] (symmetric around midpoint)."""
+    if lp_val > 0.5:
+        return 1.0 - lp_val
+    return lp_val
 
 
 def parse_snv_string(snv_str):
@@ -172,7 +209,192 @@ def get_snv_aligned_wildcards(snv_info, kmer_size):
     return wildcards
 
 
-def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size):
+def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, include_revcomp=True):
+    from collections import defaultdict
+
+    def get_matches(wildcard, strand):
+        region_to_alleles = defaultdict(set)
+        region_kmer_hits = {}
+
+        for kmer in kmer_positions:
+            if len(kmer) != kmer_size:
+                continue
+            test_kmer = kmer if strand == "forward" else reverse_complement(kmer)
+            if wildcard_match(test_kmer, wildcard):
+                allele = test_kmer[wildcard.index(".")]
+                for region_id, offset in kmer_positions[kmer].items():
+                    region_to_alleles[region_id].add(allele)
+                    region_kmer_hits.setdefault(region_id, {})[allele] = (offset, kmer)
+
+        return region_to_alleles, region_kmer_hits
+
+    allele_region_offsets = {}
+    matched_regions = set()
+    wildcards = get_snv_aligned_wildcards(snv_info, kmer_size)
+
+    for motif_pos, wildcard in wildcards:
+        fw_to_alleles, fw_hits = get_matches(wildcard, strand="forward")
+        rc_to_alleles, rc_hits = (
+            get_matches(wildcard, strand="reverse") if include_revcomp else ({}, {})
+        )
+
+        combined = defaultdict(set)
+        for region, alleles in fw_to_alleles.items():
+            combined[region].update(alleles)
+        for region, alleles in rc_to_alleles.items():
+            combined[region].update(alleles)
+
+        # Now handle unambiguous
+        for region, alleles in combined.items():
+            if len(alleles) == 1:
+                allele = next(iter(alleles))
+                j = wildcard.index(".")
+                if region in fw_hits and allele in fw_hits[region]:
+                    offset, _ = fw_hits[region][allele]
+                    is_reverse = False
+                elif region in rc_hits and allele in rc_hits[region]:
+                    offset, _ = rc_hits[region][allele]
+                    is_reverse = True
+                else:
+                    continue  # shouldn't happen, but safety
+
+                # Store wildcard base position (not k-mer start) so lp is consistent across strands
+                from utils import wildcard_pos_from_offset
+                wildcard_pos = wildcard_pos_from_offset(
+                    offset=offset,
+                    j=j,
+                    kmer_size=kmer_size,
+                    is_reverse=is_reverse,
+                )
+
+                allele_region_offsets.setdefault(motif_pos, {}).setdefault(allele, {})[
+                    region
+                ] = wildcard_pos
+                matched_regions.add(region)
+
+    return allele_region_offsets, wildcards, matched_regions
+
+
+def run_aff_regression(
+    motif_pos,
+    snv_index,
+    allele_region_offsets,
+    allele_matched_kmers,
+    intensities,
+    region_seq=None,
+    model_type="nb",
+    include_covariates=True,
+    fold_half=True,
+    return_matrix=False,
+):
+    import pandas as pd
+    import numpy as np
+    import statsmodels.api as sm
+    import math
+    from utils import extract_covariates
+
+    rows = []
+    ref_allele = region_seq[motif_pos + snv_index]
+    alleles = list(allele_region_offsets.get(motif_pos, {}).keys())
+    alt_alleles = [a for a in alleles if a != ref_allele]
+
+    all_regions = set()
+    for a in alleles:
+        all_regions.update(allele_region_offsets[motif_pos][a].keys())
+
+    design = []
+    y_values = []
+    region_list = []
+
+    for region in all_regions:
+        row = {a: 0 for a in alt_alleles}
+        # Count how many alleles (alt + ref) this region maps to
+        present_alleles = [
+            a for a in alleles if region in allele_region_offsets[motif_pos][a]
+        ]
+        if len(present_alleles) == 1 and region in intensities:
+            only_allele = present_alleles[0]
+            if only_allele in alt_alleles:
+                row[only_allele] = 1
+            # Else, it's the ref allele → all zeros
+            design.append(row)
+            y_values.append(intensities[region])
+            region_list.append(region)
+
+    if not design:
+        return []
+
+    X = pd.DataFrame(design, index=region_list)
+    y = pd.Series(y_values, index=region_list)
+
+    if include_covariates:
+        kmer_pos = {
+            region: allele_region_offsets[motif_pos][a][region]
+            for a in alleles
+            for region in allele_region_offsets[motif_pos][a]
+        }
+        lp, sl = extract_covariates(region_list, kmer_pos, fold_half=fold_half)
+        X["lp"] = lp
+        X["sl"] = sl
+
+    X_const = sm.add_constant(X)
+    model = (
+        sm.GLM(y, X_const, family=sm.families.NegativeBinomial())
+        if model_type == "nb"
+        else sm.OLS(np.log1p(y), X_const)
+    )
+    results = model.fit()
+
+    seen = set()
+    for a in alt_alleles:
+        coef = results.params.get(a, math.nan)
+        pval = results.pvalues.get(a, math.nan)
+        for wildcard_kmer, filled_kmer, _ in allele_matched_kmers[motif_pos][
+            snv_index
+        ].get(a, []):
+            key = (wildcard_kmer, filled_kmer)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(
+                {
+                    "wildcard_kmer": wildcard_kmer,
+                    "filled_kmer": filled_kmer,
+                    "motif_pos": motif_pos,
+                    "snp_index": snv_index,
+                    "type": "AFF",
+                    "allele": a,
+                    "coef": coef,
+                    "pval": pval,
+                    "absolute_pos": motif_pos + snv_index,
+                }
+            )
+
+    # Add ref allele rows
+    for wildcard_kmer, filled_kmer, _ in allele_matched_kmers[motif_pos][snv_index].get(
+        ref_allele, []
+    ):
+        key = (wildcard_kmer, filled_kmer)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "wildcard_kmer": wildcard_kmer,
+                "filled_kmer": filled_kmer,
+                "motif_pos": motif_pos,
+                "snp_index": snv_index,
+                "type": "AFF",
+                "allele": ref_allele,
+                "coef": "NA",
+                "pval": "NA",
+                "absolute_pos": motif_pos + snv_index,
+            }
+        )
+
+    return (rows, X, y) if return_matrix else rows
+
+def _match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size):
     allele_region_offsets = {}
     matched_regions = set()
     wildcards = get_snv_aligned_wildcards(snv_info, kmer_size)
@@ -544,6 +766,68 @@ def scan_motif_kmers(region_seq, kmer_size, kmer_positions):
                                 continue
                             seen.add(key)
 
+                            is_reverse = (match_kmer == filled_kmer_reverse_complement)
+                            wildcard_pos = wildcard_pos_from_offset(
+                                offset=offset,
+                                j=snv_index,
+                                kmer_size=kmer_size,
+                                is_reverse=is_reverse,
+                            )
+
+                            # Store wildcard base position (not k-mer start) so lp is consistent across strands
+                            allele_region_offsets[motif_pos][snv_index][base][region_id] = wildcard_pos
+
+                            # Always store the forward-facing version (filled_kmer)
+                            allele_matched_kmers[motif_pos][snv_index][base].append(
+                                (wildcard_kmer, filled_kmer, region_id)
+                            )
+
+                            # Always store both forward and reverse-facing version (match_kmer)
+                            # allele_matched_kmers[motif_pos][snv_index][base].append(
+                            #     (wildcard_kmer, match_kmer, region_id)
+                            # )
+
+    return allele_region_offsets, allele_matched_kmers
+
+# OLDER FUNCTION
+def _scan_motif_kmers(region_seq, kmer_size, kmer_positions):
+    """
+    Slides a k-mer window across the sequence and builds:
+    - allele_region_offsets[motif_pos][snv_index][allele][region_id] = offset
+    - allele_matched_kmers[motif_pos][snv_index][allele] = list of (wildcard_kmer, matched_kmer, region_id)
+
+    Returns:
+        (allele_region_offsets, allele_matched_kmers)
+    """
+
+    allele_region_offsets = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    allele_matched_kmers = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+    seen = set()  # prevent duplicate matches per motif_pos + snv + base + region + kmer
+
+    for motif_pos in range(len(region_seq) - kmer_size + 1):
+        kmer = region_seq[motif_pos : motif_pos + kmer_size]
+
+        for snv_index in range(kmer_size):
+            # Create wildcarded k-mer
+            wildcard_kmer = list(kmer)
+            wildcard_kmer[snv_index] = "."
+            wildcard_kmer = "".join(wildcard_kmer)
+
+            for base in "ACGT":
+                filled_kmer = list(kmer)
+                filled_kmer[snv_index] = base
+                filled_kmer = "".join(filled_kmer)
+                filled_kmer_reverse_complement = reverse_complement(filled_kmer)
+
+                for match_kmer in [filled_kmer, filled_kmer_reverse_complement]:
+                    if match_kmer in kmer_positions:
+                        for region_id, offset in kmer_positions[match_kmer].items():
+                            key = (motif_pos, snv_index, base, region_id, match_kmer)
+                            if key in seen:
+                                continue
+                            seen.add(key)
+
                             allele_region_offsets[motif_pos][snv_index][base][
                                 region_id
                             ] = offset
@@ -805,8 +1089,108 @@ def sample_rand_kmers_per_allele(
 
     return rand_regions_per_allele, used_regions
 
-
 def run_rand_regression_from_region_map(
+    rand_regions_per_allele,
+    probe_intensities,
+    snv_str,
+    model_type="nb",
+    kmer_size=8,
+    fold_half=True,
+):
+    """
+    Runs per-position regression using predefined allele-to-region mapping.
+
+    Parameters:
+        rand_regions_per_allele: dict of {motif_pos: {allele: set(region_ids)}}
+        probe_intensities: dict of region -> intensity
+        snv_str: e.g., 'chr5:1295113:C>T'
+        model_type: 'nb' or 'ols'
+
+    Returns:
+        List of dicts with motif_pos, allele, coef, pval, n, label="RAND"
+    """
+    results = []
+    all_alleles = ["A", "C", "G", "T"]
+
+    for motif_pos in sorted(rand_regions_per_allele):
+        region_sets = rand_regions_per_allele[motif_pos]
+
+        # Combine all regions
+        all_regions = set()
+        for allele in all_alleles:
+            all_regions.update(region_sets.get(allele, set()))
+
+        # Prepare covariates
+        y, lp_cov, sl_cov, X_alleles = [], [], [], {a: [] for a in all_alleles}
+        for region in all_regions:
+            if region not in probe_intensities:
+                continue
+            y.append(probe_intensities[region])
+            try:
+                _, coords = region.split(":")
+                start, end = map(int, coords.split("-"))
+                length = end - start
+            except:
+                length = 200
+            # rand_regions_per_allele[motif_pos][allele] is expected to be {region: offset}
+            offset = None
+            for allele in all_alleles:
+                d = region_sets.get(allele)
+                if isinstance(d, dict) and region in d:
+                    offset = d[region]
+                    break
+            wildcard_pos = wildcard_pos_from_offset(
+                offset=offset,
+                j=motif_pos,
+                kmer_size=kmer_size,
+                is_reverse=False,
+            )
+            lp_val = (wildcard_pos / length) if length > 0 else 0.5
+            if fold_half:
+                lp_val = fold_lp_half(lp_val)
+            lp_cov.append(lp_val)
+            sl_cov.append(length)
+
+            for allele in all_alleles:
+                X_alleles[allele].append(
+                    1 if region in region_sets.get(allele, set()) else 0
+                )
+
+        if len(y) < 10:
+            continue
+
+        # Build design matrix
+        X_df = pd.DataFrame({a: X_alleles[a] for a in all_alleles})
+        X_df["lp"] = lp_cov
+        X_df["sl"] = sl_cov
+        X_const = sm.add_constant(X_df)
+        y = np.array(y)
+
+        if model_type == "ols":
+            y_transformed = np.log1p(y)
+            model = sm.OLS(y_transformed, X_const)
+        else:
+            model = sm.GLM(y, X_const, family=sm.families.NegativeBinomial())
+
+        fit = model.fit()
+
+        for allele in all_alleles:
+            results.append(
+                {
+                    "snv_str": snv_str,
+                    "motif_pos": motif_pos,
+                    "allele": allele,
+                    "coef": fit.params.get(allele, 0.0),
+                    "pval": fit.pvalues.get(allele, np.nan),
+                    "n": len(region_sets.get(allele, [])),
+                    "label": "RAND",
+                }
+            )
+
+    return results
+
+# OLDER FUNCTION
+def _run_rand_regression_from_region_map(
     rand_regions_per_allele, probe_intensities, snv_str, model_type="nb"
 ):
     """
@@ -1005,7 +1389,7 @@ def _dump_glm_inputs(outfile, allele_matrix, y, extra_covariates):
         f.write("y: " + " ".join(map(str, y)) + "\n")
 
 
-def extract_covariates(regions, region_to_kmer_pos):
+def _extract_covariates(regions, region_to_kmer_pos):
     lp = []
     sl = []
     for region in regions:
@@ -1014,6 +1398,21 @@ def extract_covariates(regions, region_to_kmer_pos):
         size = end - start
         kmer_pos = region_to_kmer_pos.get(region, 0)
         lp_val = kmer_pos / size if size > 0 else 0.5
+        lp.append(lp_val)
+        sl.append(size)
+    return lp, sl
+
+def extract_covariates(regions, region_to_kmer_pos, fold_half=False):
+    lp = []
+    sl = []
+    for region in regions:
+        _, coords = region.split(":")
+        start, end = map(int, coords.split("-"))
+        size = end - start
+        kmer_pos = region_to_kmer_pos.get(region, 0)
+        lp_val = (kmer_pos / size) if size > 0 else 0.5
+        if fold_half:
+            lp_val = fold_lp_half(lp_val)
         lp.append(lp_val)
         sl.append(size)
     return lp, sl
@@ -1076,8 +1475,139 @@ def _run_regression(
 
     return stats
 
-
 def run_snv_regression(
+    motif_pos,
+    snv_index,
+    allele_region_offsets,
+    allele_matched_kmers,
+    intensities,
+    region_seq=None,
+    model_type="nb",
+    include_covariates=True,
+    fold_half=True,
+):
+    import pandas as pd
+    import numpy as np
+    import math
+    import statsmodels.api as sm
+    from collections import defaultdict
+    import time
+    from utils import extract_covariates  # assumes your extract_covariates is defined
+
+    start = time.time()
+    rows = []
+
+    # [Step 1] Get alleles and reference
+    ref_allele = region_seq[motif_pos + snv_index]
+    region_lookup = allele_region_offsets[motif_pos][snv_index]
+    all_alleles = sorted(region_lookup.keys())
+    alt_alleles = [a for a in all_alleles if a != ref_allele]
+
+    # [Step 2] Build region → allele map
+    region_to_alleles = defaultdict(set)
+    for allele, regions in region_lookup.items():
+        for region in regions:
+            region_to_alleles[region].add(allele)
+
+    # [Step 3] Select unambiguous regions with intensity
+    unambiguous_regions = [
+        region
+        for region, allele_set in region_to_alleles.items()
+        if len(allele_set) == 1 and region in intensities
+    ]
+    if not unambiguous_regions:
+        return []
+
+    # [Step 4] Build design matrix with numpy
+    allele_index = {a: i for i, a in enumerate(alt_alleles)}
+    design_array = np.zeros(
+        (len(unambiguous_regions), len(alt_alleles)), dtype=np.uint8
+    )
+    y_values = []
+    region_list = []
+
+    for i, region in enumerate(unambiguous_regions):
+        assigned = next(iter(region_to_alleles[region]))
+        if assigned in allele_index:
+            design_array[i, allele_index[assigned]] = 1
+        y_values.append(intensities[region])
+        region_list.append(region)
+
+    X = pd.DataFrame(design_array, index=region_list, columns=alt_alleles)
+    y = pd.Series(y_values, index=region_list)
+
+    # [Step 5] Covariates
+    if include_covariates:
+        kmer_pos = {
+            region: region_lookup[allele][region]
+            for allele in all_alleles
+            for region in region_lookup[allele]
+            if region in region_list
+        }
+        lp, sl = extract_covariates(region_list, kmer_pos, fold_half=fold_half)
+        X["lp"] = lp
+        X["sl"] = sl
+
+    # [Step 6] Regression
+    X_const = sm.add_constant(X)
+    if model_type == "ols":
+        model = sm.OLS(y.apply(math.log1p), X_const)
+    else:
+        model = sm.GLM(y, X_const, family=sm.families.NegativeBinomial())
+
+    results = model.fit()
+
+    # [Step 7] Output rows
+    seen = set()
+    for allele in alt_alleles:
+        coef = results.params.get(allele, math.nan)
+        pval = results.pvalues.get(allele, math.nan)
+        for wildcard_kmer, filled_kmer, _ in allele_matched_kmers[motif_pos][
+            snv_index
+        ].get(allele, []):
+            key = (wildcard_kmer, filled_kmer)
+            if key not in seen:
+                seen.add(key)
+                rows.append(
+                    [
+                        wildcard_kmer,
+                        filled_kmer,
+                        motif_pos,
+                        snv_index,
+                        "AFF",
+                        allele,
+                        coef,
+                        pval,
+                        motif_pos + snv_index,
+                    ]
+                )
+
+    # [Step 8] Add ref allele with NA
+    for wildcard_kmer, filled_kmer, _ in allele_matched_kmers[motif_pos][snv_index].get(
+        ref_allele, []
+    ):
+        key = (wildcard_kmer, filled_kmer)
+        if key not in seen:
+            seen.add(key)
+            rows.append(
+                [
+                    wildcard_kmer,
+                    filled_kmer,
+                    motif_pos,
+                    snv_index,
+                    "AFF",
+                    ref_allele,
+                    "NA",
+                    "NA",
+                    motif_pos + snv_index,
+                ]
+            )
+
+    # print(f"[✓] Regression done for window {motif_pos}:{snv_index} in {time.time() - start:.2f}s")
+    return rows
+
+# OLDER FUNCTION
+def _run_snv_regression(
     motif_pos,
     snv_index,
     allele_region_offsets,

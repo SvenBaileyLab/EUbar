@@ -41,6 +41,11 @@ def main():
     parser.add_argument(
         "--reverse", action="store_true", help="Use reverse complement of the sequence"
     )
+    parser.add_argument(
+        "--raw-lp",
+        action="store_true",
+        help="Use raw lp in [0,1] (no folding to [0,0.5]). Default matches Perl folding.",
+    )
     args = parser.parse_args()
 
     intensities = read_intensities(args.intensities)
@@ -71,6 +76,7 @@ def main():
                 model_type=args.mode,
                 include_covariates=not args.no_covariates,
                 region_seq=region_seq,
+                fold_half=(not args.raw_lp),
             )
             all_rows.extend(rows)
 

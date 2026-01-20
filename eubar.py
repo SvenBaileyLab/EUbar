@@ -3,13 +3,14 @@ import re
 import sys
 
 from utils import (
+    wildcard_match,
     read_intensities,
     read_unique_kmer_positions,
     parse_snv_string,
     normalize_snv_region,
     get_snv_aligned_wildcards,
-    # match_snv_aligned_kmers,
-    run_per_motif_regression,
+    match_snv_aligned_kmers,
+    run_aff_regression,
     sample_rand_kmers_per_allele,
     run_rand_regression_from_region_map,
     print_motif_effect_table,
@@ -17,18 +18,8 @@ from utils import (
 )
 
 
-def wildcard_match(kmer, wildcard):
-    """
-    Returns True if the kmer matches the wildcard pattern (dot as any base).
-    Much faster than regex.
-    """
-    for k, w in zip(kmer, wildcard):
-        if w != "." and k != w:
-            return False
-    return True
-
-
-def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, include_revcomp=True):
+# OLDER FUNCTIONS - TO DELETE LATER IF UNUSED
+def _match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, include_revcomp=True):
     from collections import defaultdict
 
     def get_matches(wildcard, strand):
@@ -82,7 +73,7 @@ def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, include_revcomp
     return allele_region_offsets, wildcards, matched_regions
 
 
-def run_aff_regression(
+def _run_aff_regression(
     motif_pos,
     snv_index,
     allele_region_offsets,
@@ -246,6 +237,11 @@ def main():
         default=5000,
         help="Number of random probes to use for RAND regression (default: 5000)",
     )
+    parser.add_argument(
+    "--raw-lp",
+    action="store_true",
+    help="Use raw lp in [0,1] (no folding to [0,0.5]). Default matches Perl folding.",
+)
 
     args = parser.parse_args()
 
@@ -299,6 +295,7 @@ def main():
                         region_seq=snv_info["region_seq"],
                         model_type=args.mode,
                         include_covariates=not args.no_covariates,
+                        fold_half=(not args.raw_lp),
                     )
                     results_aff.extend(rows)
 
@@ -316,6 +313,8 @@ def main():
                 probe_intensities=intensities,
                 snv_str=snv_info["snv_str"],
                 model_type=args.mode,
+                kmer_size=args.kmer_size,
+                fold_half=(not args.raw_lp),
             )
 
             # Step 4: Print results
