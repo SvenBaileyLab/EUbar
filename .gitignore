@@ -75,3 +75,4 @@ tests/*
 CTCF_mutations_analyses/*
 perl/*
 GM12878/*
+outfiles/*
