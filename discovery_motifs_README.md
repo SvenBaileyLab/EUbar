@@ -172,7 +172,7 @@ If you see `F = 0` (or `F < --min-per-base`), then the script could not compute 
 ## Example Run
 
 ```bash
-python new_discover_motifs.py \
+python discover_motifs.py \
   --intensities intensities_file \
   --kmers array_file \
   --kmer-size 8 \
