@@ -623,7 +623,7 @@ def _info_content(p: pd.Series, eps: float = 1e-12) -> float:
     return float(1.0 - ent / ent_max)
 
 
-def extend_side_paperlike(
+def extend_side(
     window: str,
     window_probs: List[pd.Series],
     kmer_to_idx: Dict[str, np.ndarray],
@@ -1171,7 +1171,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     left_rows: List[Dict] = []
     right_rows: List[Dict] = []
 
-    # Paper-like extension works by shifting an 8-mer window and (optionally)
+    # Extension works by shifting an 8-mer window and (optionally)
     # turning low-information anchor positions into '.' wildcards to preserve support.
     #
     # By default we auto-extend (args.extend_left/right == -1) until support fails.
@@ -1182,7 +1182,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # left
     if args.extend_left != 0:
         steps = args.auto_max_steps if args.extend_left < 0 else int(args.extend_left)
-        left_flank, window, window_probs, left_rows = extend_side_paperlike(
+        left_flank, window, window_probs, left_rows = extend_side(
             window=window,
             window_probs=window_probs,
             kmer_to_idx=kmer_to_idx,
@@ -1202,7 +1202,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.extend_right != 0:
         steps = args.auto_max_steps if args.extend_right < 0 else int(args.extend_right)
-        right_flank, window, window_probs, right_rows = extend_side_paperlike(
+        right_flank, window, window_probs, right_rows = extend_side(
             window=window,
             window_probs=window_probs,
             kmer_to_idx=kmer_to_idx,
