@@ -49,9 +49,9 @@ Conceptually:
 
 From the k-mer positions file, we build a map:
 
-\[
+$$
 \text{kmer} \rightarrow \{i \in U\}
-\]
+$$
 
 where \(i\) is the index of a probe/region that contains that k-mer.
 
@@ -61,9 +61,10 @@ If `--combine-revcomp` is enabled, then a k-mer and its reverse complement contr
 
 For each candidate k-mer (and optionally for gapped patterns with `.`), we compute an enrichment score:
 
-$$\[
+
+$$
 E = \mathrm{AUC}(\text{foreground ranks vs all probes}) - 0.5 \in [-0.5, 0.5]
-\]$$
+$$
 
 - foreground = probes containing that k-mer/pattern
 - background = all probes
@@ -80,23 +81,23 @@ Given the chosen seed (an 8-mer), the script evaluates each position \(j \in \{0
 - apply a “reduced” filter so probes that match multiple variants are removed
 - compute reduced enrichment and a p-value for each base \(b\):
 
-\[
+$$
 E_{reduced}(b) = \mathrm{AUC}(F_b \text{ vs } B_b) - 0.5
-\]
+$$
 
 where:
 
-\[
+$$
 B_b = \bigcup_{x \neq b} F_x
-\]
+$$
 
 To accept the wobble at that position, each base must have at least `--min-per-base` probes in its foreground set \(F_b\).
 
 Finally, the script converts the four \(E_{reduced}\) values into a probability vector via softmax:
 
-\[
+$$
 P(b) = \frac{\exp(\beta \cdot E_{reduced}(b))}{\sum_{x \in \{A,C,G,T\}} \exp(\beta \cdot E_{reduced}(x))}
-\]
+$$
 
 where `--beta` controls how “sharp” the probabilities are.
 
@@ -108,15 +109,15 @@ If `--extend-left/right` is enabled (default auto), the script tries to extend t
 
 For right extension, it keeps the last 7 bases of the current window as an “anchor”, and tests 4 patterns of the form:
 
-\[
+$$
 \text{anchor}(7) + b
-\]
+$$
 
 For left extension:
 
-\[
+$$
 b + \text{anchor}(7)
-\]
+$$
 
 To preserve probe support, the script can replace the **lowest-information** anchor positions with `.` (up to `--max-gaps`) and tries increasing the number of gaps until all four bases have enough support \(F \ge \text{min-per-base}\).
 
