@@ -14,9 +14,7 @@ It identifies a high-signal **8-mer seed** using an enrichment metric, then perf
 ## Arguments
 
 | Argument | Description |
-
 |---|---|
-
 | `--intensities` | Probe intensity file (required). Used to rank probes by signal. :contentReference[oaicite:1]{index=1} |
 | `--kmers` | k-mer positions file (required). Mapping of k-mers to probes/regions. :contentReference[oaicite:2]{index=2} |
 | `--kmer-size` | k-mer size (default: 8). :contentReference[oaicite:3]{index=3} |
@@ -32,7 +30,6 @@ It identifies a high-signal **8-mer seed** using an enrichment metric, then perf
 | `--top-n-report` | Write top-N seed candidates by E-score to a TSV (default: 50). :contentReference[oaicite:13]{index=13} |
 | `--outdir` | Output directory (default: current directory). :contentReference[oaicite:14]{index=14} |
 | `--prefix` | Output prefix (default: `discovered`). :contentReference[oaicite:15]{index=15} |
-
 ---
 
 ## How It Works
