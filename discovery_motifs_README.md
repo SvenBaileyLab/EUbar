@@ -1,4 +1,4 @@
-# discover_motifs.py (seed-and-wobble, Berger/“8-mer” style)
+# discover_motifs.py
 
 ---
 
@@ -15,21 +15,22 @@ It identifies a high-signal **8-mer seed** using an enrichment metric, then perf
 
 | Argument | Description |
 |---|---|
-| `--intensities` | Probe intensity file (required). Used to rank probes by signal. :contentReference[oaicite:1]{index=1} |
-| `--kmers` | k-mer positions file (required). Mapping of k-mers to probes/regions. :contentReference[oaicite:2]{index=2} |
-| `--kmer-size` | k-mer size (default: 8). :contentReference[oaicite:3]{index=3} |
-| `--combine-revcomp` | Combine each k-mer with its reverse complement into a single key when building probe sets (default: off). :contentReference[oaicite:4]{index=4} |
-| `--min-F` | Minimum foreground probe count $$F$$ required for a k-mer/pattern to be considered during seed search (default: 20). :contentReference[oaicite:5]{index=5} |
-| `--max-gaps` | Maximum number of wildcard positions `.` allowed in seed search / extension patterns (default: 3). Set to 0 to only use exact k-mers. :contentReference[oaicite:6]{index=6} |
-| `--min-per-base` | Minimum per-base support $$F$$ required in each reduced test A/C/G/T to accept a wobble/extension step (default: 20). :contentReference[oaicite:7]{index=7} |
-| `--beta` | Softmax scale used to convert reduced enrichment scores $$E_{reduced}$$ into probabilities (default: 10). :contentReference[oaicite:8]{index=8} |
-| `--extend-left` | Number of left extension steps. `-1` = auto until stop (default). `0` = off. :contentReference[oaicite:9]{index=9} |
-| `--extend-right` | Number of right extension steps. `-1` = auto until stop (default). `0` = off. :contentReference[oaicite:10]{index=10} |
-| `--auto-max-steps` | When `--extend-left/right = -1`, attempt up to this many steps before giving up (default: 20). :contentReference[oaicite:11]{index=11} |
-| `--seed` | Force a specific seed (skips seed search). :contentReference[oaicite:12]{index=12} |
-| `--top-n-report` | Write top-N seed candidates by E-score to a TSV (default: 50). :contentReference[oaicite:13]{index=13} |
-| `--outdir` | Output directory (default: current directory). :contentReference[oaicite:14]{index=14} |
-| `--prefix` | Output prefix (default: `discovered`). :contentReference[oaicite:15]{index=15} |
+| `--intensities` | Probe intensity file (required). Used to rank probes by signal. |
+| `--kmers` | k-mer positions file (required). Mapping of k-mers to probes/regions. |
+| `--kmer-size` | k-mer size (default: 8). |
+| `--combine-revcomp` | Combine each k-mer with its reverse complement into a single key when building probe sets (default: off). |
+| `--min-F` | Minimum foreground probe count \(F\) required for a k-mer/pattern to be considered during seed search (default: 20). |
+| `--max-gaps` | Maximum number of wildcard positions `.` allowed in seed search / extension patterns (default: 3). Set to 0 to only use exact k-mers. |
+| `--min-per-base` | Minimum per-base support \(F\) required in each reduced test A/C/G/T to accept a wobble/extension step (default: 20). |
+| `--beta` | Softmax scale used to convert reduced enrichment scores \(E_{reduced}\) into probabilities (default: 10). |
+| `--extend-left` | Number of left extension steps. `-1` = auto until stop (default). `0` = off. |
+| `--extend-right` | Number of right extension steps. `-1` = auto until stop (default). `0` = off. |
+| `--auto-max-steps` | When `--extend-left/right = -1`, attempt up to this many steps before giving up (default: 20). |
+| `--seed` | Force a specific seed (skips seed search). |
+| `--top-n-report` | Write top-N seed candidates by E-score to a TSV (default: 50). |
+| `--outdir` | Output directory (default: current directory). |
+| `--prefix` | Output prefix (default: `discovered`). |
+
 ---
 
 ## How It Works
@@ -41,56 +42,65 @@ This rank order is what the enrichment metric operates on.
 
 Conceptually:
 
-- you have a universe of probes $$U = \{0,1,\dots,N-1\}$$ sorted by signal
-
+- you have a universe of probes \(U = \{0,1,\dots,N-1\}\) sorted by signal
 - higher-signal probes get better (more extreme) ranks
 
 ### 2) Build k-mer → probe index sets
 
-From the k-mer positions file, we build a map
+From the k-mer positions file, we build a map:
 
-$$\text{kmer} \rightarrow \{i \in U\}$$
+\[
+\text{kmer} \rightarrow \{i \in U\}
+\]
 
-where $$i$$ is the index of a probe/region that contains that k-mer.
+where \(i\) is the index of a probe/region that contains that k-mer.
 
-If `--combine-revcomp` is enabled, then a k-mer and its reverse complement contribute to the same key during this indexing step (so their probe sets are merged). :contentReference[oaicite:16]{index=16}
+If `--combine-revcomp` is enabled, then a k-mer and its reverse complement contribute to the same key during this indexing step (so their probe sets are merged).
 
 ### 3) Seed selection by E-score (AUC − 0.5)
 
 For each candidate k-mer (and optionally for gapped patterns with `.`), we compute an enrichment score:
 
-$$E = \mathrm{AUC}(\text{foreground ranks vs all probes}) - 0.5 \in [-0.5, 0.5]$$
+\[
+E = \mathrm{AUC}(\text{foreground ranks vs all probes}) - 0.5 \in [-0.5, 0.5]
+\]
 
 - foreground = probes containing that k-mer/pattern
 - background = all probes
-- larger $$E$$ means “foreground probes tend to be higher-signal”
+- larger \(E\) means “foreground probes tend to be higher-signal”
 
-Seed search supports gapped patterns when `--max-gaps > 0`: patterns are generated by replacing up to `max_gaps` positions by `.` and aggregating matching exact 8-mers. :contentReference[oaicite:17]{index=17}
+Seed search supports gapped patterns when `--max-gaps > 0`: patterns are generated by replacing up to `max_gaps` positions by `.` and aggregating matching exact 8-mers.
 
 ### 4) Core wobble (reduced tests across A/C/G/T)
 
-Given the chosen seed (an 8-mer), the script evaluates each position $$j \in \{0,\dots,7\}$$ using a reduced test:
+Given the chosen seed (an 8-mer), the script evaluates each position \(j \in \{0,\dots,7\}\) using a reduced test:
 
-- construct 4 variants that differ only at position $$j$$ (A/C/G/T)
-- define foreground probe sets $$F_A, F_C, F_G, F_T$$ as probes matching each variant
+- construct 4 variants that differ only at position \(j\) (A/C/G/T)
+- define foreground probe sets \(F_A, F_C, F_G, F_T\) as probes matching each variant
 - apply a “reduced” filter so probes that match multiple variants are removed
-- compute reduced enrichment and a p-value for each base $$b$$:
+- compute reduced enrichment and a p-value for each base \(b\):
 
-$$E_{reduced}(b) = \mathrm{AUC}(F_b \text{ vs } B_b) - 0.5$$
+\[
+E_{reduced}(b) = \mathrm{AUC}(F_b \text{ vs } B_b) - 0.5
+\]
 
-where
+where:
 
-$$B_b = \bigcup_{x \neq b} F_x$$
+\[
+B_b = \bigcup_{x \neq b} F_x
+\]
 
-To accept the wobble at that position, each base must have at least `--min-per-base` probes in its foreground set $$F_b$$. :contentReference[oaicite:18]{index=18}
+To accept the wobble at that position, each base must have at least `--min-per-base` probes in its foreground set \(F_b\).
 
-Finally, the script converts the four $$E_{reduced}$$ values into a probability vector via softmax:
+Finally, the script converts the four \(E_{reduced}\) values into a probability vector via softmax:
 
-$$P(b) = \frac{\exp(\beta \cdot E_{reduced}(b))}{\sum_{x \in \{A,C,G,T\}} \exp(\beta \cdot E_{reduced}(x))}$$
+\[
+P(b) = \frac{\exp(\beta \cdot E_{reduced}(b))}{\sum_{x \in \{A,C,G,T\}} \exp(\beta \cdot E_{reduced}(x))}
+\]
 
-where `--beta` controls how “sharp” the probabilities are. :contentReference[oaicite:19]{index=19}
+where `--beta` controls how “sharp” the probabilities are.
 
-This produces a **core PPM** (position probability matrix) of shape $$8 \times 4$$.
+This produces a **core PPM** (position probability matrix) of shape \(8 \times 4\).
 
 ### 5) Optional extension (window shifting + gapped anchors)
 
@@ -98,38 +108,40 @@ If `--extend-left/right` is enabled (default auto), the script tries to extend t
 
 For right extension, it keeps the last 7 bases of the current window as an “anchor”, and tests 4 patterns of the form:
 
-$$\text{anchor}(7) + b$$
+\[
+\text{anchor}(7) + b
+\]
 
 For left extension:
 
-$$b + \text{anchor}(7)$$
+\[
+b + \text{anchor}(7)
+\]
 
-To preserve probe support, the script can replace the **lowest-information** anchor positions with `.` (up to `--max-gaps`) and tries increasing the number of gaps until all four bases have enough support $$F \ge \text{min-per-base}$$. :contentReference[oaicite:20]{index=20}
+To preserve probe support, the script can replace the **lowest-information** anchor positions with `.` (up to `--max-gaps`) and tries increasing the number of gaps until all four bases have enough support \(F \ge \text{min-per-base}\).
 
-Extension stops automatically when it cannot find any gapped level (from 0..max_gaps) that yields sufficient per-base support. :contentReference[oaicite:21]{index=21}
+Extension stops automatically when it cannot find any gapped level (from 0..max_gaps) that yields sufficient per-base support.
 
 ### 6) Stitch final motif PPM and write outputs
 
-Left flank + core + right flank are stitched into a single PPM, and a consensus sequence is derived by taking the max-probability base per position. :contentReference[oaicite:22]{index=22}
+Left flank + core + right flank are stitched into a single PPM, and a consensus sequence is derived by taking the max-probability base per position.
 
 ---
 
 ## Outputs
 
 | File | Description |
-
 |---|---|
-
-| `{prefix}.top_escores.tsv` | Top seed candidates ranked by $$E$$ (AUC − 0.5), including support $$F$$ and number of gaps used in the pattern. :contentReference[oaicite:23]{index=23} |
-| `{prefix}.reduced.tsv` | Core 8-mer wobble results (one row per position × base), with reduced $$E_{reduced}$$, p-value, and counts $$F$$ and $$B$$. :contentReference[oaicite:24]{index=24} |
-| `{prefix}.reduced_full.tsv` | Full reduced table (left extension + core + right extension). This is the “everything we tested” table and is what you’d use to recreate Fig3-panel-A-style visualizations. :contentReference[oaicite:25]{index=25} |
-| `{prefix}.ppm.tsv` | Final stitched PPM (rows = positions, columns = A/C/G/T). :contentReference[oaicite:26]{index=26} |
-| `{prefix}.meme` | MEME-format motif PWM/PPM representation for downstream tools. :contentReference[oaicite:27]{index=27} |
-| `{prefix}.logo.png` | Sequence logo generated from the final motif PPM. :contentReference[oaicite:28]{index=28} |
-| `{prefix}.seed_enrichment_curve.png` | Seed enrichment curve / diagnostic plot. :contentReference[oaicite:29]{index=29} |
-| `{prefix}.seed_roc.png` | Seed ROC plot (foreground vs background). :contentReference[oaicite:30]{index=30} |
-| `{prefix}.seed_escore_hist.png` | Histogram diagnostic for seed E-scores. :contentReference[oaicite:31]{index=31} |
-| `{prefix}.motif_vs_E.png` | QC: motif score vs E-score trend plot. :contentReference[oaicite:32]{index=32} |
+| `{prefix}.top_escores.tsv` | Top seed candidates ranked by \(E\) (AUC − 0.5), including support \(F\) and number of gaps used in the pattern. |
+| `{prefix}.reduced.tsv` | Core 8-mer wobble results (one row per position × base), with reduced \(E_{reduced}\), p-value, and counts \(F\) and \(B\). |
+| `{prefix}.reduced_full.tsv` | Full reduced table (left extension + core + right extension). This is the “everything we tested” table and is what you’d use to recreate Fig3-panel-A-style visualizations. |
+| `{prefix}.ppm.tsv` | Final stitched PPM (rows = positions, columns = A/C/G/T). |
+| `{prefix}.meme` | MEME-format motif PWM/PPM representation for downstream tools. |
+| `{prefix}.logo.png` | Sequence logo generated from the final motif PPM. |
+| `{prefix}.seed_enrichment_curve.png` | Seed enrichment curve / diagnostic plot. |
+| `{prefix}.seed_roc.png` | Seed ROC plot (foreground vs background). |
+| `{prefix}.seed_escore_hist.png` | Histogram diagnostic for seed E-scores. |
+| `{prefix}.motif_vs_E.png` | QC: motif score vs E-score trend plot. |
 
 ---
 
@@ -144,12 +156,12 @@ Columns:
 - `pos`: the stitched motif coordinate:
   - negative values = left flank positions
   - 0..7 = original seed positions
-  - 8,9,... = right flank positions :contentReference[oaicite:33]{index=33}
+  - 8,9,... = right flank positions
 - `gaps_used`: how many `.` positions were introduced into the 7-bp anchor to get enough probe support
 - `variant`: the exact 8-character pattern tested (may contain `.` in flank steps)
 - `F`: foreground probe count for this base
-- `B`: background probe count for this base $$B = \sum_{x \neq b} F_x$$
-- `E_reduced`: reduced enrichment score $$E_{reduced} \in [-0.5, 0.5]$$
+- `B`: background probe count for this base \(B = \sum_{x \neq b} F_x\)
+- `E_reduced`: reduced enrichment score \(E_{reduced} \in [-0.5, 0.5]\)
 - `p`: p-value associated with the reduced test
 
 If you see `F = 0` (or `F < --min-per-base`), then the script could not compute a meaningful reduced test for that base at that step; those rows often have blank/NA `E_reduced` and `p` because there is no foreground. (This is the “not enough probes” case you noticed.)
@@ -160,8 +172,9 @@ If you see `F = 0` (or `F < --min-per-base`), then the script could not compute 
 
 ```bash
 python new_discover_motifs.py \
-  --intensities data/intensities/DNase_GABPA_MCF7_probeIntensity.bed \
-  --kmers data/array/MCF7_Array_8mer_DNase.txt \
+  --intensities intensities_file \
+  --kmers array_file \
   --kmer-size 8 \
-  --outdir out2 \
-  --prefix gabpa
+  --outdir out \
+  --prefix tf
+```
