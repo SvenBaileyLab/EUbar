@@ -1,6 +1,6 @@
----
-
 # discover_motifs.py (seed-and-wobble, Berger/“8-mer” style)
+
+---
 
 This script performs **seed-and-wobble motif discovery** from two inputs:
 
