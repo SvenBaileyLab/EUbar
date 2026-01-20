@@ -61,9 +61,9 @@ If `--combine-revcomp` is enabled, then a k-mer and its reverse complement contr
 
 For each candidate k-mer (and optionally for gapped patterns with `.`), we compute an enrichment score:
 
-\[
+$$\[
 E = \mathrm{AUC}(\text{foreground ranks vs all probes}) - 0.5 \in [-0.5, 0.5]
-\]
+\]$$
 
 - foreground = probes containing that k-mer/pattern
 - background = all probes
