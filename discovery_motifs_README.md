@@ -7,29 +7,31 @@ This script performs **seed-and-wobble motif discovery** from two inputs:
 - a probe-intensity file (one intensity per probe/region)
 - a k-mer → probe/region mapping file (where each k-mer occurs)
 
-It identifies a high-signal **8-mer seed** using an enrichment metric, then performs **wobble** (reduced tests across A/C/G/T at each position) and optional **extension** to build a longer motif.
+It identifies a high-signal **seed** using an enrichment metric, then performs **wobble** (reduced tests across A/C/G/T at each position) and optional **extension** to build a longer motif.
 
 ---
 
 ## Arguments
 
 | Argument | Description |
-|---|---|
+| --- | --- |
 | `--intensities` | Probe intensity file (required). Used to rank probes by signal. |
-| `--kmers` | k-mer positions file (required). Mapping of k-mers to probes/regions. |
-| `--kmer-size` | k-mer size (default: 8). |
+| `--kmers` | K-mer positions file (required). Mapping of k-mers to probes/regions. |
+| `--kmer-size` | k-mer size (default: 8). Seed search, wobble, and extension all operate on this k. |
 | `--combine-revcomp` | Combine each k-mer with its reverse complement into a single key when building probe sets (default: off). |
-| `--min-F` | Minimum foreground probe count \(F\) required for a k-mer/pattern to be considered during seed search (default: 20). |
+| `--min-F` | Minimum foreground probe count $F$ required for a k-mer/pattern to be considered during seed search (default: 20). |
 | `--max-gaps` | Maximum number of wildcard positions `.` allowed in seed search / extension patterns (default: 3). Set to 0 to only use exact k-mers. |
-| `--min-per-base` | Minimum per-base support \(F\) required in each reduced test A/C/G/T to accept a wobble/extension step (default: 20). |
-| `--beta` | Softmax scale used to convert reduced enrichment scores \(E_{reduced}\) into probabilities (default: 10). |
-| `--extend-left` | Number of left extension steps. `-1` = auto until stop (default). `0` = off. |
-| `--extend-right` | Number of right extension steps. `-1` = auto until stop (default). `0` = off. |
-| `--auto-max-steps` | When `--extend-left/right = -1`, attempt up to this many steps before giving up (default: 20). |
-| `--seed` | Force a specific seed (skips seed search). |
-| `--top-n-report` | Write top-N seed candidates by E-score to a TSV (default: 50). |
+| `--min-per-base` | Minimum per-base support $F$ required in reduced tests (default: 20). |
+| `--beta` | Softmax scale used to convert reduced enrichment scores $E_{\text{reduced}}$ into probabilities (default: 10). |
+| `--auto-max-steps` | When `--extend-left/right = -1`, attempt up to this many extension steps before stopping (default: 20). |
+| `--extend-left` | Left extension steps. `-1` = auto until stop (default). `0` = off. |
+| `--extend-right` | Right extension steps. `-1` = auto until stop (default). `0` = off. |
+| `--ic-stop-threshold` | Information-content threshold for extension stopping (default: 0.20). If a newly added flank position has IC below this value for `--ic-stop-consecutive` steps, extension stops. |
+| `--ic-stop-consecutive` | Number of consecutive low-IC flank positions required to stop extension (default: 2). |
 | `--outdir` | Output directory (default: current directory). |
-| `--prefix` | Output prefix (default: `discovered`). |
+| `--prefix` | Output prefix (default: `affinity_motif`). |
+| `--seed` | Force a specific seed k-mer (skips seed search). |
+| `--top-n-report` | Write top-N seed candidates by E-score to a TSV (default: 50). |
 
 ---
 
@@ -42,7 +44,7 @@ This rank order is what the enrichment metric operates on.
 
 Conceptually:
 
-- you have a universe of probes \(U = \{0,1,\dots,N-1\}\) sorted by signal
+- you have a universe of probes $U = \{0,1,\dots,N-1\}$ sorted by signal
 - higher-signal probes get better (more extreme) ranks
 
 ### 2) Build k-mer → probe index sets
@@ -50,17 +52,20 @@ Conceptually:
 From the k-mer positions file, we build a map:
 
 $$
-\text{kmer} \rightarrow \{i \in U\}
+\text{kmer} \rightarrow \{ i \in U \}
 $$
 
-where \(i\) is the index of a probe/region that contains that k-mer.
+where $i$ is the index of a probe/region that contains that k-mer.
 
-If `--combine-revcomp` is enabled, then a k-mer and its reverse complement contribute to the same key during this indexing step (so their probe sets are merged).
+Notes:
+
+- The loader keeps **unique-occurrence hits** per region (it retains only regions where a k-mer occurs once, i.e. `count == 1` in the positions file), and stores an offset per region (currently parsed but not used downstream in scoring/extension).
+- The script also filters the k-mer index to `len(kmer) == --kmer-size`.
+- If `--combine-revcomp` is enabled, each k-mer and its reverse complement contribute to the same key (so their probe sets are merged).
 
 ### 3) Seed selection by E-score (AUC − 0.5)
 
 For each candidate k-mer (and optionally for gapped patterns with `.`), we compute an enrichment score:
-
 
 $$
 E = \mathrm{AUC}(\text{foreground ranks vs all probes}) - 0.5 \in [-0.5, 0.5]
@@ -68,60 +73,68 @@ $$
 
 - foreground = probes containing that k-mer/pattern
 - background = all probes
-- larger \(E\) means “foreground probes tend to be higher-signal”
+- larger $E$ means “foreground probes tend to be higher-signal”
 
-Seed search supports gapped patterns when `--max-gaps > 0`: patterns are generated by replacing up to `max_gaps` positions by `.` and aggregating matching exact 8-mers.
+Seed search supports gapped patterns when `--max-gaps > 0`: patterns are generated by replacing up to `max_gaps` positions by `.` and aggregating matching exact k-mers.
 
 ### 4) Core wobble (reduced tests across A/C/G/T)
 
-Given the chosen seed (an 8-mer), the script evaluates each position \(j \in \{0,\dots,7\}\) using a reduced test:
+Given the chosen seed (a k-mer), the script evaluates each position $j \in \{0,\dots,k-1\}$ using a reduced test:
 
-- construct 4 variants that differ only at position \(j\) (A/C/G/T)
-- define foreground probe sets \(F_A, F_C, F_G, F_T\) as probes matching each variant
-- apply a “reduced” filter so probes that match multiple variants are removed
-- compute reduced enrichment and a p-value for each base \(b\):
+- construct 4 variants that differ only at position $j$ (A/C/G/T)  
+- define foreground probe sets $(F_A, F_C, F_G, F_T)$ as probes matching each variant  
+- apply a “reduced” filter so probes that match multiple variants are removed  
+- compute reduced enrichment and a p-value for each base $b$  
 
 $$
-E_{reduced}(b) = \mathrm{AUC}(F_b \text{ vs } B_b) - 0.5
+E_{\text{reduced}}(b) = \mathrm{AUC}(F_b \text{ vs } B_b) - 0.5
 $$
 
 where:
 
 $$
-B_b = \bigcup_{x \neq b} F_x
+B_b = \bigcup_{x \ne b} F_x
 $$
 
-To accept the wobble at that position, each base must have at least `--min-per-base` probes in its foreground set \(F_b\).
+Support handling in core wobble:
 
-Finally, the script converts the four \(E_{reduced}\) values into a probability vector via softmax:
+- The script does **not** require all four bases to meet `--min-per-base`.
+- If **fewer than 2** bases have enough support, it outputs `NA` reduced stats for that position and uses a uniform probability row (0.25 each).
+- Otherwise, it computes reduced stats for supported bases; unsupported bases get `NA` and probability 0, then probabilities are renormalized over supported bases.
+
+Finally, the script converts the per-position $E_{\text{reduced}}$ values into a probability vector via softmax:
 
 $$
-P(b) = \frac{\exp(\beta \cdot E_{reduced}(b))}{\sum_{x \in \{A,C,G,T\}} \exp(\beta \cdot E_{reduced}(x))}
+P(b) = \frac{\exp(\beta \cdot E_{\text{reduced}}(b))}{\sum_{x \in \{A,C,G,T\}} \exp(\beta \cdot E_{\text{reduced}}(x))}
 $$
 
 where `--beta` controls how “sharp” the probabilities are.
 
-This produces a **core PPM** (position probability matrix) of shape \(8 \times 4\).
+This produces a **core PPM** (position probability matrix) of shape $k \times 4$.
 
-### 5) Optional extension (window shifting + gapped anchors)
+### 5) Optional extension (window shifting + gapped anchors + IC stop)
 
-If `--extend-left/right` is enabled (default auto), the script tries to extend the motif by shifting an 8-mer window one base at a time and repeating reduced tests, **while allowing gapped anchors**.
+If `--extend-left/right` is enabled (default auto), the script tries to extend the motif by shifting a **k-mer window** one base at a time and repeating reduced tests, **while allowing gapped anchors**.
 
-For right extension, it keeps the last 7 bases of the current window as an “anchor”, and tests 4 patterns of the form:
+For right extension, it keeps the last **k−1** bases of the current window as an “anchor”, and tests 4 patterns of the form:
 
 $$
-\text{anchor}(7) + b
+\text{anchor}(k-1) + b
 $$
 
 For left extension:
 
 $$
-b + \text{anchor}(7)
+b + \text{anchor}(k-1)
 $$
 
-To preserve probe support, the script can replace the **lowest-information** anchor positions with `.` (up to `--max-gaps`) and tries increasing the number of gaps until all four bases have enough support \(F \ge \text{min-per-base}\).
+To preserve probe support, the script can replace the **least-informative anchor positions** with `.` (up to `--max-gaps`) and tries increasing the number of gaps until all four bases have enough support $F \ge \text{min-per-base}$.
 
-Extension stops automatically when it cannot find any gapped level (from 0..max_gaps) that yields sufficient per-base support.
+Extension stopping rules:
+
+- **Support stop:** stop when no gap level (0..max_gaps) yields sufficient per-base support.
+- **IC stop:** after adding a new flank position, compute an information-content proxy $\mathrm{IC} \in [0,1]$ for its probability vector (0 ≈ uniform, 1 ≈ deterministic).  
+  If $\mathrm{IC} < \text{--ic-stop-threshold}$ for `--ic-stop-consecutive` consecutive added positions, stop extending in that direction.
 
 ### 6) Stitch final motif PPM and write outputs
 
@@ -132,17 +145,17 @@ Left flank + core + right flank are stitched into a single PPM, and a consensus 
 ## Outputs
 
 | File | Description |
-|---|---|
-| `{prefix}.top_escores.tsv` | Top seed candidates ranked by \(E\) (AUC − 0.5), including support \(F\) and number of gaps used in the pattern. |
-| `{prefix}.reduced.tsv` | Core 8-mer wobble results (one row per position × base), with reduced \(E_{reduced}\), p-value, and counts \(F\) and \(B\). |
-| `{prefix}.reduced_full.tsv` | Full reduced table (left extension + core + right extension). This is the “everything we tested” table and is what you’d use to recreate Fig3-panel-A-style visualizations. |
+| --- | --- |
+| `{prefix}.top_escores.tsv` | Top seed candidates ranked by $E$ (AUC − 0.5), including support $F$ and number of gaps used in the pattern. |
+| `{prefix}.reduced.tsv` | Core wobble results (one row per position × base), with $E_{\text{reduced}}$, p-value, and counts $F$ and $B$. |
+| `{prefix}.reduced_full.tsv` | Full reduced table (left extension + core + right extension). This is the “everything we tested” table and is what you’d use to recreate Fig3-panel-A-style visualizations. Includes an `IC` column for flank steps. |
 | `{prefix}.ppm.tsv` | Final stitched PPM (rows = positions, columns = A/C/G/T). |
-| `{prefix}.meme` | MEME-format motif PWM/PPM representation for downstream tools. |
+| `{prefix}.meme` | MEME-format motif representation for downstream tools. |
 | `{prefix}.logo.png` | Sequence logo generated from the final motif PPM. |
-| `{prefix}.seed_enrichment_curve.png` | Seed enrichment curve / diagnostic plot. |
-| `{prefix}.seed_roc.png` | Seed ROC plot (foreground vs background). |
-| `{prefix}.seed_escore_hist.png` | Histogram diagnostic for seed E-scores. |
-| `{prefix}.motif_vs_E.png` | QC: motif score vs E-score trend plot. |
+| `{prefix}.seed_enrichment_curve.png` | Seed enrichment curve / diagnostic plot (skipped if seed has no foreground hits). |
+| `{prefix}.seed_roc.png` | Seed ROC plot (foreground vs background; skipped if seed has no foreground hits). |
+| `{prefix}.seed_escore_hist.png` | Histogram diagnostic for seed E-scores (skipped if seed has no foreground hits). |
+| `{prefix}.motif_vs_E.png` | QC: motif score vs E-score trend plot (only produced when final motif length equals `--kmer-size`). |
 
 ---
 
@@ -153,19 +166,20 @@ Each row corresponds to **one base choice** (A/C/G/T) in **one reduced test** at
 Columns:
 
 - `side`: which phase the test came from: `left`, `core`, or `right`
-- `step`: which extension step (for `core`, this is the original 0..7 position)
+- `step`: which extension step (for `core`, this is the original 0..k-1 position)
 - `pos`: the stitched motif coordinate:
   - negative values = left flank positions
-  - 0..7 = original seed positions
-  - 8,9,... = right flank positions
-- `gaps_used`: how many `.` positions were introduced into the 7-bp anchor to get enough probe support
-- `variant`: the exact 8-character pattern tested (may contain `.` in flank steps)
+  - 0..k-1 = original seed positions
+  - k,k+1,... = right flank positions
+- `gaps_used`: how many `.` positions were introduced into the (k−1)-bp anchor to get enough probe support (flanks only)
+- `variant`: the exact k-character pattern tested (may contain `.` in flank steps)
 - `F`: foreground probe count for this base
-- `B`: background probe count for this base \(B = \sum_{x \neq b} F_x\)
-- `E_reduced`: reduced enrichment score \(E_{reduced} \in [-0.5, 0.5]\)
+- `B`: background probe count for this base
+- `E_reduced`: reduced enrichment score ($E_{\text{reduced}} \in [-0.5, 0.5]$)
 - `p`: p-value associated with the reduced test
+- `IC`: information-content proxy for the probability vector at that step (flanks only)
 
-If you see `F = 0` (or `F < --min-per-base`), then the script could not compute a meaningful reduced test for that base at that step; those rows often have blank/NA `E_reduced` and `p` because there is no foreground. (This is the “not enough probes” case you noticed.)
+If you see `F = 0` or `F < --min-per-base`, then that base did not have enough support. In the **core**, those rows typically have `NA` for `E_reduced` and `p`. In the **flanks**, the extender requires all four bases to meet `--min-per-base`, so extension stops before producing an accepted step without enough support.
 
 ---
 

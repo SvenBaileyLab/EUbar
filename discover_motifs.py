@@ -1,44 +1,3 @@
-#!/usr/bin/env python3
-"""discover_motifs.py
-
-Implements a practical version of the PBM "seed-and-wobble" algorithm (Berger et al.)
-using:
-  - probe intensities (one value per probe/region)
-  - a k-mer -> probe index map (k-mer positions file)
-
-Core ideas
-----------
-1) Compute an enrichment score (E-score) for every k-mer:
-     E = AUC(fg vs bg) - 0.5   in [-0.5, 0.5]
-   where fg = probes containing the k-mer, bg = all other probes.
-
-2) Pick the best seed k-mer (highest E, with enough probe support).
-
-3) "Wobble": for each position in the seed, build 4 single-base variants and compute
-   *reduced* E-scores that compare probes containing one variant vs probes containing
-   the other variants (restricted to probes that match exactly one of the 4 variants).
-
-4) Convert reduced E-scores to probabilities with a Boltzmann/softmax transform:
-     P(base) ∝ exp(beta * E_reduced)
-
-5) Optional: greedily extend left/right by repeating reduced tests on flanks
-   (using shifted 8-mers, so it works with a plain 8-mer index).
-
-Outputs
--------
-- <prefix>.ppm.tsv       : position probability matrix
-- <prefix>.meme          : MEME motif file
-- <prefix>.logo.png      : sequence logo
-- <prefix>.seed_roc.png  : enrichment/ROC-style plot for the seed
-- <prefix>.motif_vs_E.png: QC plot (mean E vs motif log-score bins)
-
-Notes
------
-- This script does NOT depend on scipy/statsmodels.
-- It avoids ambiguous probes in reduced tests (drops probes matching >1 of the 4 variants).
-
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -362,7 +321,7 @@ def ppm_from_seed_wobble(
     min_per_base: int,
     beta: float,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Compute an 8-position PPM from reduced E-scores at each position.
+    """Compute an k-position PPM from reduced E-scores at each position.
 
     Returns:
       reduced_table (long)
@@ -562,7 +521,7 @@ def extend_side_greedy(
     side: str,
     max_steps: int,
 ) -> Tuple[List[pd.Series], str]:
-    """Greedy flank extension using reduced tests on shifted 8-mers.
+    """Greedy flank extension using reduced tests on shifted k-mers.
 
     side:
       - "left": variants are (b + window[:-1])
@@ -571,7 +530,7 @@ def extend_side_greedy(
     Returns:
       flank_ppm: list of pd.Series of probabilities (each has index A,C,G,T)
                 ordered from nearest-to-seed outward (so caller can reverse for left)
-      final_window: the last 8-mer window after extension
+      final_window: the last k-mer window after extension
     """
     window = seed
     flank_ppm: List[pd.Series] = []
@@ -579,14 +538,14 @@ def extend_side_greedy(
     for _ in range(max_steps):
         variants: Dict[str, np.ndarray] = {}
         if side == "left":
-            anchor7 = window[:-1]
+            anchor = window[:-1]
             for b in BASES:
-                var = b + anchor7
+                var = b + anchor
                 variants[b] = kmer_to_idx.get(var, np.array([], dtype=int))
         elif side == "right":
-            anchor7 = window[1:]
+            anchor = window[1:]
             for b in BASES:
-                var = anchor7 + b
+                var = anchor + b
                 variants[b] = kmer_to_idx.get(var, np.array([], dtype=int))
         else:
             raise ValueError("side must be 'left' or 'right'")
@@ -613,6 +572,7 @@ def extend_side_greedy(
 
     return flank_ppm, window
 
+
 def _info_content(p: pd.Series, eps: float = 1e-12) -> float:
     """Information content proxy in [0,1]. 0 = uniform, 1 = deterministic."""
     v = np.array([float(p.get(b, 0.0)) for b in BASES], dtype=float)
@@ -638,12 +598,12 @@ def extend_side(
 ) -> Tuple[List[pd.Series], str, List[pd.Series], List[Dict]]:
     """Extend motif flanks while allowing gaps by dropping least-informative positions.
 
-    This mirrors the intuition from Berger et al. Fig 3a: when shifting an 8-mer window,
+    This mirrors the intuition from Berger et al. Fig 3a: when shifting a k-mer window,
     you can maintain probe support by treating a low-information position as a wildcard ('.').
 
     Practical implementation here:
       - Extend one base at a time (left or right).
-      - At each step, build 4 candidate 8-mer *patterns* (with '.' wildcards allowed)
+      - At each step, build 4 candidate k-mer *patterns* (with '.' wildcards allowed)
         that differ only in the newly added base.
       - If support is insufficient, progressively add wildcards at the least-informative
         anchor positions (up to max_gaps) and retry.
@@ -651,8 +611,8 @@ def extend_side(
 
     Returns:
       flank_ppm    : list of probability vectors for the newly added positions (nearest->outward)
-      final_window : final 8-mer consensus window after extension
-      final_probs  : updated list of 8 probability vectors corresponding to final_window
+      final_window : final k-mer consensus window after extension
+      final_probs  : updated list of probability vectors corresponding to final_window
       reduced_rows : list of dict rows (one per base per step) for a "reduced_full" table
                      (pos is filled in by the caller).
     """
@@ -669,31 +629,33 @@ def extend_side(
 
     for step in range(max_steps):
         if side == "right":
-            anchor = list(window[1:])  # 7
+            anchor = list(window[1:])
             anchor_probs = window_probs[1:]
-            order = sorted(range(7), key=lambda i: _info_content(anchor_probs[i]))
+            anchor_len = len(anchor)
+            order = sorted(range(anchor_len), key=lambda i: _info_content(anchor_probs[i]))
 
             def make_pattern(new_base: str, gaps: int) -> str:
                 a = anchor.copy()
-                for gi in range(min(gaps, 7)):
+                for gi in range(min(gaps, anchor_len)):
                     a[order[gi]] = "."
                 return "".join(a) + new_base
 
         else:  # left
             anchor = list(window[:-1])
             anchor_probs = window_probs[:-1]
-            order = sorted(range(7), key=lambda i: _info_content(anchor_probs[i]))
+            anchor_len = len(anchor)
+            order = sorted(range(anchor_len), key=lambda i: _info_content(anchor_probs[i]))
 
             def make_pattern(new_base: str, gaps: int) -> str:
                 a = anchor.copy()
-                for gi in range(min(gaps, 7)):
+                for gi in range(min(gaps, anchor_len)):
                     a[order[gi]] = "."
                 return new_base + "".join(a)
 
         chosen_gaps: Optional[int] = None
         clean_sets: Optional[Dict[str, np.ndarray]] = None
 
-        for gaps in range(0, max_gaps + 1):
+        for gaps in range(0, min(max_gaps, anchor_len) + 1):
             variants: Dict[str, np.ndarray] = {}
             for b in BASES:
                 pat = make_pattern(b, gaps)
@@ -736,7 +698,6 @@ def extend_side(
 
         flank_ppm.append(probs)
 
-
         # Save rows (caller assigns the final motif position index)
         for b in BASES:
             reduced_rows.append(
@@ -750,7 +711,7 @@ def extend_side(
                     p=float(pvals[b]),
                     F=int(F_sizes[b]),
                     B=int(B_sizes[b]),
-                        IC=float(ic),
+                    IC=float(ic),
                 )
             )
 
@@ -765,7 +726,6 @@ def extend_side(
             window_probs = [probs] + window_probs[:-1]
 
     return flank_ppm, window, window_probs, reduced_rows
-
 
 
 def stitch_ppm(
@@ -997,19 +957,29 @@ def plot_motif_vs_escore(
     q: int = 20,
 ) -> None:
     """QC plot: bin motif log-scores and plot mean E-score per bin."""
-    L = ppm.shape[0]
-    # if motif longer than k, compare on the central window of length k if possible
-    # here we compare only kmers of length L (so only works if L == kmer_size)
+    if es_df.empty:
+        return
 
-    if L != len(es_df.loc[0, "kmer"]):
-        # skip if lengths mismatch
+    L = int(ppm.shape[0])
+
+    # Find any representative k-mer length (avoid assuming row 0 exists / is a string)
+    k_example = None
+    for x in es_df["kmer"].astype(str).tolist():
+        if x:
+            k_example = len(x)
+            break
+
+    if k_example is None or L != k_example:
         return
 
     df = es_df.copy()
-    df["motif_logscore"] = df["kmer"].apply(lambda k: motif_logscore(k, ppm))
+    df["motif_logscore"] = df["kmer"].apply(lambda k: motif_logscore(str(k), ppm))
 
     # bin and aggregate
     qc = df.dropna(subset=["motif_logscore", "E"]).copy()
+    if qc.empty:
+        return
+
     qc["bin"] = pd.qcut(qc["motif_logscore"], q=q, duplicates="drop")
     trend = qc.groupby("bin").agg(
         mean_motif=("motif_logscore", "mean"),
@@ -1084,8 +1054,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument(
         "--ic-stop-threshold",
         type=float,
-        default=0.10,
-        help="Information-content threshold for flank extension stopping (default: 0.10). If a newly added flank position has IC below this value for N consecutive steps, extension stops.",
+        default=0.20,
+        help="Information-content threshold for flank extension stopping (default: 0.20). If a newly added flank position has IC below this value for N consecutive steps, extension stops.",
     )
     ap.add_argument(
         "--ic-stop-consecutive",
@@ -1100,8 +1070,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     ap.add_argument(
         "--prefix",
-        default="discovered",
-        help="Output prefix (default: discovered)",
+        default="affinity_motif",
+        help="Output prefix (default: affinity_motif)",
     )
     ap.add_argument(
         "--seed",
@@ -1117,8 +1087,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     args = ap.parse_args(argv)
 
+    # Cap max gaps used during EXTENSION to what is possible for the chosen k (anchor length = k-1).
+    # (Seed search can still use up to args.max_gaps wildcards within length-k patterns.)
+    max_gaps_ext = min(int(args.max_gaps), int(args.kmer_size) - 1)
+    if max_gaps_ext < 0:
+        max_gaps_ext = 0
+
     if args.kmer_size != 8:
-        sys.stderr.write("[warn] This script is tuned for 8-mers; other sizes will work only partially.\n")
+        sys.stderr.write(
+            f"[note] Using k={args.kmer_size}. Seed/wobble/extension support this, "
+            "but probe support and runtime may change with k.\n"
+        )
 
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -1171,7 +1150,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     left_rows: List[Dict] = []
     right_rows: List[Dict] = []
 
-    # Extension works by shifting an 8-mer window and (optionally)
+    # Extension works by shifting a k-mer window and (optionally)
     # turning low-information anchor positions into '.' wildcards to preserve support.
     #
     # By default we auto-extend (args.extend_left/right == -1) until support fails.
@@ -1191,7 +1170,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             min_per_base=args.min_per_base,
             side="left",
             max_steps=steps,
-            max_gaps=int(args.max_gaps),
+            max_gaps=int(max_gaps_ext),
             ic_stop_threshold=float(args.ic_stop_threshold),
             ic_stop_consecutive=int(args.ic_stop_consecutive),
         )
@@ -1211,7 +1190,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             min_per_base=args.min_per_base,
             side="right",
             max_steps=steps,
-            max_gaps=int(args.max_gaps),
+            max_gaps=int(max_gaps_ext),
             ic_stop_threshold=float(args.ic_stop_threshold),
             ic_stop_consecutive=int(args.ic_stop_consecutive),
         )
@@ -1254,10 +1233,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         reduced_full_df["pos"] = reduced_full_df["pos"].astype(int)
         reduced_full_df.sort_values(["pos", "side", "base"], inplace=True)
 
-
     ppm.to_csv(ppm_path, sep="\t")
     reduced_df.to_csv(reduced_path, sep="\t", index=False)
-    reduced_full_df.to_csv(reduced_full_path, sep="	", index=False)
+    reduced_full_df.to_csv(reduced_full_path, sep="\t", index=False)
 
     write_meme(ppm.reset_index(drop=True), meme_path, motif_name=consensus)
     plot_logo(ppm.reset_index(drop=True), logo_path, title=f"{consensus} (seed={seed})")
