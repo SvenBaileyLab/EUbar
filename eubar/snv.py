@@ -2,7 +2,7 @@ import argparse
 import re
 import sys
 
-from utils import (
+from eubar.utils import (
     wildcard_match,
     read_intensities,
     read_unique_kmer_positions,

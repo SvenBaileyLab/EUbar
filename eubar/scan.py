@@ -1,5 +1,5 @@
 import argparse
-from utils import (
+from eubar.utils import (
     read_intensities,
     scan_motif_kmers,
     read_unique_kmer_positions,
@@ -44,7 +44,7 @@ def main():
     parser.add_argument(
         "--raw-lp",
         action="store_true",
-        help="Use raw lp in [0,1] (no folding to [0,0.5]). Default matches Perl folding.",
+        help="Use raw lp in [0,1] (no folding to [0,0.5]).",
     )
     args = parser.parse_args()
 

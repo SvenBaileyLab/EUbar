@@ -78,8 +78,11 @@ def main():
     )
     parser.add_argument("--bed", required=True, help="Input BED file")
     parser.add_argument("--genome", required=True, help="Reference genome in FASTA format")
-    parser.add_argument("--kmer_size", type=int, default=8, help="Length of k-mers to extract")
-    parser.add_argument("--output", required=True, help="Output file for the k-mer index")
+    parser.add_argument("--kmer_size", "--kmer-size", dest="kmer_size",
+                        type=int, default=8, help="Length of k-mers to extract")
+    parser.add_argument("--output", "--out", dest="output",
+                        required=True, help="Output file for the k-mer index")
+
 
     args = parser.parse_args()
 
