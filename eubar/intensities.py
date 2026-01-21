@@ -125,7 +125,7 @@ def run_bedtools_map_pybedtools(a_bed, b_bedgraph, output_path, genome=None, kee
         print(f"[Cleanup] Removed temporary deduplicated BED: {dedup_a_bed}")
 
 
-def main():
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Extract max ChIP signal over DNase/ATAC regions from either BigWig or BedGraph."
     )
@@ -134,10 +134,10 @@ def main():
                         help="Path to ChIP-seq BedGraph OR BigWig file (-b)")
     parser.add_argument("--output", required=True, help="Output file path")
     parser.add_argument("--genome", default=None,
-                        help="Optional genome chrom sizes file for bedtools sort (-g). Strongly recommended.")
+                        help="Optional genome chrom sizes file for bedtools sort (-g)")
     parser.add_argument("--keep_temp", action="store_true", help="Keep temporary files")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if is_bigwig(args.signal):
         run_bigwig_max_per_interval(
@@ -151,5 +151,8 @@ def main():
         )
 
 
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

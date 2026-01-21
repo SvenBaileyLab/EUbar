@@ -77,3 +77,8 @@ perl/*
 GM12878/*
 outfiles/*
 out2/*
+old/*
+\*.egg-info/
+build/
+dist/
+__pycache__/

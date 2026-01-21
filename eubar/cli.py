@@ -61,24 +61,6 @@ def _print_help() -> None:
     sys.stderr.write("\n".join(lines) + "\n")
 
 
-def _get_module_main(module_name: str) -> Optional[Callable[[list[str]], int]]:
-    """
-    Try to import eubar.<module_name> and return its main(argv) callable if present.
-    Expected signature: main(argv: list[str] | None = None) -> int
-    """
-    mod = importlib.import_module(f"eubar.{module_name}")
-    main = getattr(mod, "main", None)
-    if callable(main):
-        return main
-    return None
-
-
-def _run_module_as_subprocess(module_name: str, argv: list[str]) -> int:
-    """
-    Fallback if a module doesn't expose main(): run it as `python -m eubar.<module>`.
-    """
-    cmdline = [sys.executable, "-m", f"eubar.{module_name}", *argv]
-    return subprocess.call(cmdline)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,30 +88,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     module_name, _ = COMMANDS[cmd]
-    forwarded = argv[1:] or ["--help"]  # `eubar <cmd>` shows that command's help
+    forwarded = argv[1:] or ["--help"]
 
-    import inspect
+    # Clean dispatch: every sub-tool exposes main(argv=None) and parses argv explicitly.
+    mod = importlib.import_module(f"eubar.{module_name}")
+    tool_main = getattr(mod, "main", None)
+    if not callable(tool_main):
+        sys.stderr.write(f"[eubar] Tool module has no main(): eubar.{module_name}\n")
+        return 2
 
-    mod_main = _get_module_main(module_name)
-    if mod_main is not None:
-        try:
-            sig = inspect.signature(mod_main)
-            if len(sig.parameters) == 0:
-                # module parses sys.argv itself
-                return int(mod_main() or 0)
-            else:
-                # module accepts argv (recommended)
-                return int(mod_main(forwarded) or 0)
-        except (TypeError, ValueError):
-            # if signature introspection fails, just try argv then fallback
-            try:
-                return int(mod_main(forwarded) or 0)
-            except TypeError:
-                return int(mod_main() or 0)
-
-
-    # Otherwise fallback to `python -m eubar.<module>`
-    return _run_module_as_subprocess(module_name, forwarded)
+    rc = tool_main(list(forwarded))
+    return int(rc or 0)
 
 
 if __name__ == "__main__":

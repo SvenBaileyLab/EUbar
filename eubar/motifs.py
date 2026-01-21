@@ -997,7 +997,7 @@ def plot_motif_vs_escore(
     plt.close(fig)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="Seed-and-wobble motif discovery from probe intensities + kmer occurrence index."
     )

@@ -88,7 +88,7 @@ def _run_aff_regression(
     import numpy as np
     import statsmodels.api as sm
     import math
-    from utils import extract_covariates
+    from eubar.utils import extract_covariates
 
     rows = []
     ref_allele = region_seq[motif_pos + snv_index]
@@ -192,7 +192,7 @@ def _run_aff_regression(
     return (rows, X, y) if return_matrix else rows
 
 
-def main():
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run motif regression on SNV(s)")
     parser.add_argument(
         "--intensities", required=True, help="Path to probe intensity file"
@@ -243,7 +243,7 @@ def main():
     help="Use raw lp in [0,1] (no folding to [0,0.5]). Default matches Perl folding.",
 )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     intensities = read_intensities(args.intensities)
     kmers = read_unique_kmer_positions(args.kmerPositions)
@@ -331,5 +331,8 @@ def main():
             continue
 
 
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

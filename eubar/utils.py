@@ -259,7 +259,6 @@ def match_snv_aligned_kmers(snv_info, kmer_positions, kmer_size, include_revcomp
                     continue  # shouldn't happen, but safety
 
                 # Store wildcard base position (not k-mer start) so lp is consistent across strands
-                from utils import wildcard_pos_from_offset
                 wildcard_pos = wildcard_pos_from_offset(
                     offset=offset,
                     j=j,
@@ -291,7 +290,6 @@ def run_aff_regression(
     import numpy as np
     import statsmodels.api as sm
     import math
-    from utils import extract_covariates
 
     rows = []
     ref_allele = region_seq[motif_pos + snv_index]
@@ -1492,7 +1490,6 @@ def run_snv_regression(
     import statsmodels.api as sm
     from collections import defaultdict
     import time
-    from utils import extract_covariates  # assumes your extract_covariates is defined
 
     start = time.time()
     rows = []
@@ -1623,7 +1620,6 @@ def _run_snv_regression(
     import statsmodels.api as sm
     from collections import defaultdict
     import time
-    from utils import extract_covariates  # assumes your extract_covariates is defined
 
     start = time.time()
     rows = []

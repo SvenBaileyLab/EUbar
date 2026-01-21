@@ -72,7 +72,7 @@ def verify_kmers(all_kmers_dict, kmer_size):
         print(f"WARNING - {len(actual_kmers)} kmers found. {missing_count} missing (showing first {min(missing_count, max_print)}).")
 
 
-def main():
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="Generate k-mer index from ATAC/DNase-seq BED and genome FASTA (Numba accelerated)."
     )
@@ -84,7 +84,7 @@ def main():
                         required=True, help="Output file for the k-mer index")
 
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     fasta = Fasta(args.genome)
     all_kmers = defaultdict(list)
@@ -130,5 +130,8 @@ def main():
     verify_kmers(all_kmers, args.kmer_size)
 
 
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -11,7 +11,7 @@ from eubar.utils import (
 )
 
 
-def main():
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run motif regression on a region")
     parser.add_argument(
         "--intensities", required=True, help="Path to probe intensity file"
@@ -46,7 +46,7 @@ def main():
         action="store_true",
         help="Use raw lp in [0,1] (no folding to [0,0.5]).",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     intensities = read_intensities(args.intensities)
     kmers = read_unique_kmer_positions(args.kmerPositions)
@@ -86,5 +86,8 @@ def main():
         plot_aff_motif_effects(all_rows, save_path=args.save_figure)
 
 
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
