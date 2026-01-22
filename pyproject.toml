@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,9 +8,14 @@ version = "0.1.0"
 description = "EUBAR toolkit"
 readme = "README.md"
 requires-python = ">=3.8"
+authors = [{name="EUBAR contributors"}]
+license = {text = "GNU General Public License v3.0"}
 
 [project.scripts]
 eubar = "eubar.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
 
 [tool.setuptools]
 packages = ["eubar"]

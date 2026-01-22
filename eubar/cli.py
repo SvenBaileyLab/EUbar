@@ -74,7 +74,8 @@ def main(argv: list[str] | None = None) -> int:
     cmd = argv[0]
 
     if cmd in {"-v", "--version"}:
-        sys.stdout.write("eubar (dev)\n")
+        from eubar import __version__
+        sys.stdout.write(f"eubar {__version__}\n")
         return 0
 
     if cmd == "list":

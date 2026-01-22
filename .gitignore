@@ -82,3 +82,6 @@ old/*
 build/
 dist/
 __pycache__/
+FOXK1/*
+retired_eubar/*
+tests_old/*

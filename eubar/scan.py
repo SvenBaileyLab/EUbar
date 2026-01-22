@@ -1,91 +1,76 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
 import argparse
-from eubar.utils import (
-    read_intensities,
-    scan_motif_kmers,
-    read_unique_kmer_positions,
-    get_sequence_from_fasta,
-    print_rows_as_tsv,
-    plot_aff_motif_effects,
-    run_snv_regression,
-    reverse_complement,
-)
+import math
+
+from eubar.core.data import IntensityTable, KmerIndex
+from eubar.core.sequence import RegionWindow
+from eubar.core.matching import MotifMatcher
+from eubar.core.design import DesignBuilder
+from eubar.core.regression import RegressionEngine
+from eubar.core.analyze import analyze_region_scan
+from eubar.core.reporting import print_rows_as_tsv, plot_aff_motif_effects
+
+
+def _to_legacy_rows(dict_rows: list[dict]) -> list[list]:
+    """Convert internal dict rows to the legacy scan TSV row shape."""
+    out: list[list] = []
+    for r in dict_rows:
+        out.append(
+            [
+                r.get("wildcard_kmer", ""),
+                r.get("filled_kmer", ""),
+                int(r.get("motif_pos", 0)),
+                int(r.get("snv_index", 0)),
+                r.get("label", "AFF"),
+                r.get("allele", ""),
+                r.get("coef", float("nan")),
+                r.get("pval", float("nan")),
+                int(r.get("absolute_pos", int(r.get("motif_pos", 0)) + int(r.get("snv_index", 0)))),
+                r.get("method", "NA"),
+            ]
+        )
+    return out
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Run motif regression on a region")
-    parser.add_argument(
-        "--intensities", required=True, help="Path to probe intensity file"
-    )
-    parser.add_argument(
-        "--kmerPositions", required=True, help="Path to k-mer position file"
-    )
-    parser.add_argument("--genome", required=True, help="FASTA genome file")
-    parser.add_argument(
-        "--region", required=True, help="Genomic region, e.g. chr6:1295220-1295228"
-    )
-    parser.add_argument(
-        "--kmer_size", type=int, default=8, help="K-mer size (default: 8)"
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["nb", "ols"],
-        default="nb",
-        help="Regression mode (nb or ols)",
-    )
-    parser.add_argument(
-        "--no-covariates", action="store_true", help="Disable lp and sl covariates"
-    )
-    parser.add_argument(
-        "--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)"
-    )
-    parser.add_argument(
-        "--reverse", action="store_true", help="Use reverse complement of the sequence"
-    )
-    parser.add_argument(
-        "--raw-lp",
-        action="store_true",
-        help="Use raw lp in [0,1] (no folding to [0,0.5]).",
-    )
-    args = parser.parse_args(argv)
+    p = argparse.ArgumentParser(description="Refactored scan-mode motif regression")
+    p.add_argument("--intensities", required=True, help="Path to probe intensity file")
+    p.add_argument("--kmerPositions", required=True, help="Path to k-mer array file mapping kmers to genomic regions")
+    p.add_argument("--genome", required=True, help="FASTA genome file")
+    p.add_argument("--region", required=True, help="chr:start-end (1-based inclusive)")
+    p.add_argument("--kmer_size", type=int, default=8, help="K-mer size (default: 8)")
+    p.add_argument("--mode", choices=["nb", "ols"], default="nb",  help="Regression mode (nb or ols)")
+    p.add_argument("--no-covariates", action="store_true", help="Disable lp and sl covariates")
+    p.add_argument("--reverse", action="store_true", help="Use reverse complement of the sequence")
+    p.add_argument("--raw-lp", action="store_true", help="Use raw lp in [0,1] (no folding to [0,0.5])")
+    p.add_argument("--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)")
+    args = p.parse_args(argv)
 
-    intensities = read_intensities(args.intensities)
-    kmers = read_unique_kmer_positions(args.kmerPositions)
+    intens = IntensityTable.from_file(args.intensities)
+    kmers = KmerIndex.from_file(args.kmerPositions)
 
-    chrom, coords = args.region.split(":")
-    start, end = map(int, coords.split("-"))
-    region_seq = get_sequence_from_fasta(chrom, start, end, args.genome)
-    if args.reverse:
-        region_seq = reverse_complement(region_seq)
+    region = RegionWindow.from_region_string(args.region, args.genome, reverse=args.reverse)
+    matcher = MotifMatcher(kmers.kmers)
+    design = DesignBuilder(intens.values)
+    engine = RegressionEngine()
 
-    allele_region_offsets, allele_matched_kmers = scan_motif_kmers(
-        region_seq=region_seq,
-        kmer_size=args.kmer_size,
-        kmer_positions=kmers,
+    rows = analyze_region_scan(
+        region=region,
+        matcher=matcher,
+        design=design,
+        engine=engine,
+        k=args.kmer_size,
+        mode=args.mode,
+        include_covariates=(not args.no_covariates),
+        fold_half=(not args.raw_lp),
     )
-
-    all_rows = []
-
-    for motif_pos in sorted(allele_region_offsets):
-        for snv_index in sorted(allele_region_offsets[motif_pos]):
-            rows = run_snv_regression(
-                motif_pos,
-                snv_index,
-                allele_region_offsets,
-                allele_matched_kmers,
-                intensities,
-                model_type=args.mode,
-                include_covariates=not args.no_covariates,
-                region_seq=region_seq,
-                fold_half=(not args.raw_lp),
-            )
-            all_rows.extend(rows)
-
-    print_rows_as_tsv(all_rows)
-
+    legacy_rows = _to_legacy_rows(rows)
+    print_rows_as_tsv(legacy_rows)
     if args.save_figure:
-        plot_aff_motif_effects(all_rows, save_path=args.save_figure)
-
-
+        plot_aff_motif_effects(legacy_rows, args.save_figure)
     return 0
 
 

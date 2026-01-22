@@ -17,8 +17,14 @@ The main interface is a single umbrella command:
 
 ## Install
 
-From the repo root:
-
 ```bash
-pip install -e .
+pip install .
+
+eubar --help
+# subcommands:
+#   eubar array ...
+#   eubar intensities ...
+#   eubar scan ...
+#   eubar snv ...
+#   eubar motifs ...
 ```
