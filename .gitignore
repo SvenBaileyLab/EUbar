@@ -85,3 +85,6 @@ __pycache__/
 FOXK1/*
 retired_eubar/*
 tests_old/*
+ABC/*
+docs/*
+eubar_oldest_main_working/*

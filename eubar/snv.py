@@ -74,10 +74,12 @@ def _append_long_tsv(out_path, snv_str, seq, k, dict_rows):
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Run motif regression on SNV(s)")
+    group = p.add_mutually_exclusive_group(required=True)
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
     p.add_argument("--kmerPositions", required=True, help="Path to k-mer array file mapping kmers to genomic regions")
     p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
-    p.add_argument("--snv-list", required=True, help="Comma-separated list of SNVs in chr:pos:ref>alt format")
+    group.add_argument("--snv-list", help="Comma-separated list of SNVs in chr:pos:ref>alt format")
+    group.add_argument("--snv-list-file", help="Optional file with SNVs, one per line in chr:pos:ref>alt format")
     p.add_argument("--kmer_size", type=int, default=8, help="K-mer size (default: 8)")
     p.add_argument("--rand-n", type=int, default=500, help="Number of random probes to use for RAND regression (default: 500)")
     p.add_argument("--no-rand", action="store_true", help="Skip RAND regression and only output AFF (still prints the motif-effect table)")
@@ -94,7 +96,13 @@ def main(argv=None) -> int:
     design = DesignBuilder(intens.values)
     engine = RegressionEngine()
 
-    for snv_str in [s.strip() for s in args.snv_list.split(",") if s.strip()]:
+    if args.snv_list_file:
+        with open(args.snv_list_file) as f:
+            snvs = [line.strip() for line in f if line.strip()]
+    else:
+        snvs = [s.strip() for s in (args.snv_list or "").split(",") if s.strip()]
+
+    for snv_str in snvs:
         try:
             snv = SnvWindow.from_snv(snv_str, args.genome, k=args.kmer_size, debug=args.debug)
         except Exception as e:

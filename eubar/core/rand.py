@@ -53,6 +53,9 @@ class RandSampler:
         import random
 
         rng = random.Random(deterministic_hash(snv_str) + 1337)
+        # Cache kmer -> list(region) so we don't rebuild lists on every attempt.
+        # This is a big win because RAND sampling may perform many thousands of attempts.
+        region_key_cache: Dict[str, List[str]] = {}
         by_pos: Dict[int, Dict[str, int]] = {j: {} for j in range(k)}
         used_all: Set[str] = set()
 
@@ -68,7 +71,15 @@ class RandSampler:
                 if not region_map:
                     continue
 
-                region = rng.choice(list(region_map.keys()))
+                keys = region_key_cache.get(kmer)
+                if keys is None:
+                    # Convert once; keep as list for random.choice
+                    keys = list(region_map.keys())
+                    region_key_cache[kmer] = keys
+                if not keys:
+                    continue
+
+                region = rng.choice(keys)
                 if region in matched_regions or region in used_all or region in used_j:
                     continue
 

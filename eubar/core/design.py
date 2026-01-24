@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Dict, List, Mapping, Optional, Tuple
 
 import pandas as pd
+
+
+@lru_cache(maxsize=500_000)
+def region_length(region: str) -> int:
+    """Parse region string "chr:start-end" and return length (end-start).
+
+    Cached because the same probe/region IDs recur across many windows/SNVs.
+    """
+    try:
+        _, coords = region.split(":")
+        start_s, end_s = coords.split("-")
+        start, end = int(start_s), int(end_s)
+        return max(1, end - start)
+    except Exception:
+        return 200
 
 
 def fold_lp_half(lp_val: float) -> float:
@@ -23,10 +39,7 @@ def extract_covariates(
     lp: List[float] = []
     sl: List[int] = []
     for region in regions:
-        _, coords = region.split(":")
-        start_s, end_s = coords.split("-")
-        start, end = int(start_s), int(end_s)
-        size = end - start
+        size = region_length(region)
         kmer_pos = int(region_to_kmer_pos.get(region, 0))
         lp_val = (kmer_pos / size) if size > 0 else 0.5
         if fold_half:

@@ -20,6 +20,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "intensities": ("intensities", "Compute per-region intensities from signal track(s)"),
     "scan": ("scan", "Scan a genomic region for motif effects via regression"),
     "snv": ("snv", "Run SNV-anchored motif regression across a list of variants"),
+    "snv_pooled": ("snv_pooled", "Run SNV-anchored motif regression across a list of variants (pooled windows)"),
     "motifs": ("motifs", "Seed-and-wobble motif discovery with extension"),
 }
 
@@ -42,7 +43,7 @@ def _print_help() -> None:
         lines.append(f"    {cmd.ljust(pad)}  {desc}")
 
     lines.append("  Analysis")
-    for cmd in ("scan", "snv"):
+    for cmd in ("scan", "snv", "snv_pooled"):
         _, desc = COMMANDS[cmd]
         lines.append(f"    {cmd.ljust(pad)}  {desc}")
 
@@ -56,6 +57,7 @@ def _print_help() -> None:
     lines.append("  eubar intensities --help")
     lines.append("  eubar scan --help")
     lines.append("  eubar snv --help")
+    lines.append("  eubar snv_pooled --help")
     lines.append("  eubar motifs --help")
     lines.append("")
     sys.stderr.write("\n".join(lines) + "\n")

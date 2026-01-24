@@ -1,9 +1,10 @@
-"""Data loading and indexing for the refactored EUBAR pipeline."""
+# eubar/core/data.py
+"""Data loading and indexing."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Iterable, Tuple
 
 
 def read_intensities(path: str) -> Dict[str, float]:
@@ -74,6 +75,22 @@ class IntensityTable:
     def get(self, region: str) -> Optional[float]:
         return self.values.get(region)
 
+    # --- notebook/debug ergonomics ---
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __contains__(self, region: str) -> bool:
+        return region in self.values
+
+    def keys(self) -> Iterable[str]:
+        return self.values.keys()
+
+    def items(self) -> Iterable[Tuple[str, float]]:
+        return self.values.items()
+
+    def __repr__(self) -> str:
+        return f"IntensityTable(n={len(self.values)})"
+
 
 @dataclass(frozen=True)
 class KmerIndex:
@@ -87,3 +104,19 @@ class KmerIndex:
 
     def lookup(self, kmer: str) -> Optional[Mapping[str, int]]:
         return self.kmers.get(kmer)
+
+    # --- notebook/debug ergonomics ---
+    def __len__(self) -> int:
+        return len(self.kmers)
+
+    def __contains__(self, kmer: str) -> bool:
+        return kmer in self.kmers
+
+    def keys(self) -> Iterable[str]:
+        return self.kmers.keys()
+
+    def items(self) -> Iterable[Tuple[str, Mapping[str, int]]]:
+        return self.kmers.items()
+
+    def __repr__(self) -> str:
+        return f"KmerIndex(n_kmers={len(self.kmers)})"

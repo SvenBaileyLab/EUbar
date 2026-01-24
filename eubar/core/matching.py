@@ -85,3 +85,80 @@ class MotifMatcher:
                             )
 
         return MatchResults(allele_region_offsets=allele_region_offsets, allele_matched_kmers=allele_matched_kmers)
+
+    def scan_snv(self, region_seq: str, k: int, overlapping_windows) -> MatchResults:
+        """Fast SNV-only scan.
+
+        The full :meth:`scan` enumerates *every* wildcard position (snv_index) for
+        each k-mer window. For SNV mode we only need the single wildcard position
+        that corresponds to the SNV for each overlapping window.
+
+        Parameters
+        ----------
+        region_seq:
+            The 2*k-1 SNV window sequence.
+        k:
+            k-mer size.
+        overlapping_windows:
+            Iterable of (motif_pos, snv_index_in_kmer) pairs, typically
+            ``snv.iter_overlapping_windows()``.
+
+        Returns
+        -------
+        MatchResults
+            Same contract as :meth:`scan`, but only populated for the requested
+            windows.
+        """
+
+        allele_region_offsets: DefaultDict[int, DefaultDict[int, DefaultDict[str, Dict[str, int]]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(dict))
+        )
+        allele_matched_kmers: DefaultDict[int, DefaultDict[int, DefaultDict[str, List[Tuple[str, str, str]]]]] = defaultdict(
+            lambda: defaultdict(lambda: defaultdict(list))
+        )
+
+        for motif_pos, snv_index in overlapping_windows:
+            motif_pos = int(motif_pos)
+            snv_index = int(snv_index)
+            kmer = region_seq[motif_pos : motif_pos + k]
+            if len(kmer) != k:
+                continue
+
+            wildcard = list(kmer)
+            wildcard[snv_index] = "."
+            wildcard_kmer = "".join(wildcard)
+
+            for base in "ACGT":
+                filled = list(kmer)
+                filled[snv_index] = base
+                filled_kmer = "".join(filled)
+                rc = reverse_complement(filled_kmer)
+
+                # Avoid double-work for palindromic kmers
+                match_kmers = (filled_kmer,) if rc == filled_kmer else (filled_kmer, rc)
+
+                for match_kmer in match_kmers:
+                    region_map = self.kmer_positions.get(match_kmer)
+                    if not region_map:
+                        continue
+                    is_reverse = match_kmer == rc
+
+                    dest = allele_region_offsets[motif_pos][snv_index][base]
+                    out_list = allele_matched_kmers[motif_pos][snv_index][base]
+                    for region_id, offset in region_map.items():
+                        # If the same region is hit via both strands/palindrome, keep
+                        # the first assignment (they should imply the same wildcard_pos
+                        # for unique-hit indices anyway).
+                        if region_id in dest:
+                            continue
+
+                        wp = wildcard_pos_from_offset(
+                            offset=int(offset),
+                            j=snv_index,
+                            kmer_size=k,
+                            is_reverse=is_reverse,
+                        )
+                        dest[region_id] = wp
+                        out_list.append((wildcard_kmer, filled_kmer, region_id))
+
+        return MatchResults(allele_region_offsets=allele_region_offsets, allele_matched_kmers=allele_matched_kmers)

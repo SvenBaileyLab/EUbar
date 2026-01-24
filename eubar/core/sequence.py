@@ -1,9 +1,10 @@
-"""Sequence/window helpers for the refactored pipeline."""
+# eubar/core/sequence.py
+"""Sequence/window helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterator, Optional, Tuple
+from typing import Iterator, Tuple
 
 try:
     from pyfaidx import Fasta  # type: ignore
@@ -58,6 +59,18 @@ class RegionWindow:
             seq = reverse_complement(seq)
         return cls(chrom=chrom, start=start, end=end, seq=seq, reverse=reverse)
 
+    @property
+    def region_string(self) -> str:
+        return f"{self.chrom}:{self.start}-{self.end}"
+
+    @property
+    def region_seq(self) -> str:
+        """Legacy-ish convenience alias."""
+        return self.seq
+
+    def __len__(self) -> int:
+        return len(self.seq)
+
 
 @dataclass(frozen=True)
 class SnvWindow:
@@ -107,7 +120,6 @@ class SnvWindow:
 
         if debug:
             import sys
-
             sys.stderr.write(
                 f"[SNVWIN] {snv} start={start} end={end} snv_index={snv_index} flipped={flipped} seq={seq}\n"
             )
@@ -125,9 +137,42 @@ class SnvWindow:
             flipped=flipped,
         )
 
+    @classmethod
+    def from_string(
+        cls,
+        snv: str,
+        genome_fasta: str,
+        *,
+        flank: int | None = None,
+        k: int | None = None,
+        debug: bool = False,
+    ) -> "SnvWindow":
+        """Backward-compatible constructor.
+
+        Older scripts used ``SnvWindow.from_string(snv, genome_fasta=..., flank=K)``.
+        Newer code uses :meth:`from_snv` with ``k``.
+        """
+        if k is None:
+            # In older code "flank" meant the k-mer size used for the 2*k-1 window.
+            k = int(flank) if flank is not None else 8
+        return cls.from_snv(snv, genome_fasta, k=k, debug=debug)
+
+    # --- notebook/debug ergonomics + legacy aliasing ---
+    @property
+    def region_seq(self) -> str:
+        """Legacy alias used in older notebooks/scripts."""
+        return self.seq
+
+    @property
+    def region_string(self) -> str:
+        """Window as chr:start-end (1-based inclusive)."""
+        return f"{self.chrom}:{self.start}-{self.end}"
+
+    def __len__(self) -> int:
+        return len(self.seq)
+
     def iter_overlapping_windows(self) -> Iterator[Tuple[int, int]]:
         """Yield (motif_pos, snv_index_in_kmer) for the k windows overlapping the SNV."""
-        # windows start positions such that motif_pos <= snv_index < motif_pos+k
         for motif_pos in range(0, self.k):
             snv_index_in_kmer = self.snv_index - motif_pos
             if 0 <= snv_index_in_kmer < self.k:
