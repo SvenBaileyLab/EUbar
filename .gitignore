@@ -82,9 +82,14 @@ old/*
 build/
 dist/
 __pycache__/
-FOXK1/*
+FOXK2/*
 retired_eubar/*
 tests_old/*
 ABC/*
 docs/*
 eubar_oldest_main_working/*
+adastra/*
+GM_all_tfs/*
+SEM/*
+test_params/*
+eubar.zip

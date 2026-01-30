@@ -48,17 +48,36 @@ def kmer_matches_pattern(kmer: str, pattern: str) -> bool:
     return True
 
 
-def fg_indices_for_pattern(pattern: str, kmer_to_idx: Dict[str, np.ndarray]) -> np.ndarray:
-    """Union of probe indices for all k-mers matching `pattern` ('.' wildcard)."""
+def fg_indices_for_pattern(
+    pattern: str,
+    kmer_to_idx: Dict[str, np.ndarray],
+    cache: Optional[Dict[str, np.ndarray]] = None,
+) -> np.ndarray:
+    """Union of probe indices for all k-mers matching `pattern` ('.' wildcard).
+
+    If `cache` is provided, memoize results by pattern string.
+    """
+    if cache is not None:
+        hit = cache.get(pattern)
+        if hit is not None:
+            return hit
+
     idx_list: List[np.ndarray] = []
     for kmer, idx in kmer_to_idx.items():
         if kmer_matches_pattern(kmer, pattern):
             idx_list.append(idx)
+
     if not idx_list:
-        return np.array([], dtype=int)
-    if len(idx_list) == 1:
-        return idx_list[0]
-    return np.unique(np.concatenate(idx_list))
+        out = np.array([], dtype=int)
+    elif len(idx_list) == 1:
+        out = idx_list[0]
+    else:
+        out = np.unique(np.concatenate(idx_list))
+
+    if cache is not None:
+        cache[pattern] = out
+    return out
+
 
 
 def read_intensities(path: str) -> Dict[str, float]:
@@ -333,13 +352,14 @@ def ppm_from_seed_wobble(
     ppm_rows: List[pd.Series] = []
 
     use_patterns = ("." in seed)
+    pattern_cache: Dict[str, np.ndarray] = {}
 
     for pos in range(k):
         variants: Dict[str, np.ndarray] = {}
         for b in BASES:
             var = seed[:pos] + b + seed[pos + 1 :]
             if use_patterns:
-                idx = fg_indices_for_pattern(var, kmer_to_idx)
+                idx = fg_indices_for_pattern(var, kmer_to_idx, cache=pattern_cache)
             else:
                 idx = kmer_to_idx.get(var)
                 if idx is None:
@@ -626,6 +646,8 @@ def extend_side(
     low_streak = 0
 
     reduced_rows: List[Dict] = []
+    pattern_cache: Dict[str, np.ndarray] = {}
+
 
     for step in range(max_steps):
         if side == "right":
@@ -659,7 +681,7 @@ def extend_side(
             variants: Dict[str, np.ndarray] = {}
             for b in BASES:
                 pat = make_pattern(b, gaps)
-                variants[b] = fg_indices_for_pattern(pat, kmer_to_idx)
+                variants[b] = fg_indices_for_pattern(pat, kmer_to_idx, cache=pattern_cache)
 
             counts_df, tmp_sets = reduced_test_four_variants(variants, min_per_base=min_per_base)
             if not (counts_df["F"] < min_per_base).any():
