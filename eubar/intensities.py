@@ -376,74 +376,164 @@ def _read_two_col_map(path: str):
             out[key] = val
     return out
 
-def residualize_intensities(int_map, bed_path: str, genome_fa: str):
+def residualize_intensities(
+    int_map: dict,
+    bed_path: str,
+    genome_fa: str,
+    *,
+    use_length: bool = False,
+    resid_open: str = "off",  # {"auto","off","force"}
+    output_mode: str = "resid_log",  # {"resid_log","log_corrected","intensity_like"}
+):
     """
-    Fit: log1p(signal) ~ 1 + gc + length [+ log1p(open) if available for ALL regions]
-    Return: residual_map (same keys), plus a dict of coefficients and the formula string.
+    Residualize log1p(signal) against GC and optional covariates.
+
+    Model (OLS):
+        y_log ~ 1 + gc [+ length] [+ log1p(open)]
+
+    where:
+      - y_log = log1p(max(signal, 0))
+      - gc is computed from genome_fa over each region
+      - length is (end - start)
+      - open is taken from the BED peak table itself (if available & selected)
+
+    Parameters
+    ----------
+    use_length:
+        If False, do NOT include length, and resid_open is forced to 'off'.
+    resid_open:
+        'off'   : never include openness
+        'auto'  : include openness only if a usable column exists AND covers all regions
+        'force' : require openness; raise if missing / incomplete
+    output_mode:
+        'resid_log'       : residuals in log space (can be negative)
+        'log_corrected'   : residuals re-centered onto an intensity-like log scale (clamped >=0)
+        'intensity_like'  : expm1(log_corrected) (nonnegative)
+
+    Returns
+    -------
+    (out_map, coef_map, formula)
+
     Prints a coefficient table to stdout.
     """
+    import numpy as np
+
+    output_mode = str(output_mode).lower()
+    if output_mode not in {"resid_log", "log_corrected", "intensity_like"}:
+        raise ValueError("output_mode must be one of {'resid_log','log_corrected','intensity_like'}")
+
+    resid_open = str(resid_open).lower()
+    if resid_open not in {"auto", "off", "force"}:
+        raise ValueError("resid_open must be one of {'auto','off','force'}")
+
+    if not use_length:
+        # Per your convention: openness only makes sense when we're also using length.
+        resid_open = "off"
+
     fetch = _make_fasta_fetcher(genome_fa)
-
     regions = list(int_map.keys())
+    if not regions:
+        raise ValueError("No intensities loaded; int_map is empty")
 
-    # Covariates: gc + length
-    gc = np.zeros(len(regions), dtype=float)
-    length = np.zeros(len(regions), dtype=float)
-    y = np.zeros(len(regions), dtype=float)
+    n = len(regions)
+
+    # covariates + response
+    gc = np.zeros(n, dtype=float)
+    length = np.zeros(n, dtype=float)
+    y = np.zeros(n, dtype=float)
 
     for i, r in enumerate(regions):
         chrom, start, end = _parse_region_key(r)
         seq = fetch(chrom, start, end)
         gc[i] = _gc_fraction(seq)
         length[i] = float(end - start)
-        yv = float(int_map[r])
-        y[i] = yv
+        y[i] = float(int_map[r])
 
     y_log = np.log1p(np.maximum(y, 0.0))
 
-    # Openness from the BED itself (optional, only if complete coverage)
-    open_map, open_col, open_missing = _load_openness_from_bed(bed_path)
+    # Openness from the BED itself (optional)
     use_open = False
     open_vec = None
-    if open_map and open_missing == 0:
-        tmp = np.array([open_map.get(r, np.nan) for r in regions], dtype=float)
-        if np.isnan(tmp).sum() == 0:
-            use_open = True
-            open_vec = np.log1p(np.maximum(tmp, 0.0))
+    open_col = None
 
-    # Build design matrix
-    cols = [np.ones(len(regions), dtype=float), gc, length]
-    names = ["intercept", "gc", "length"]
-    formula = "y_log ~ 1 + gc + length"
+    if resid_open != "off":
+        open_map, open_col0, open_missing = _load_openness_from_bed(bed_path)
+        if not open_map:
+            if resid_open == "force":
+                raise ValueError("Openness requested (force) but no numeric openness column was detected in --bed.")
+        else:
+            tmp = np.array([open_map.get(r, np.nan) for r in regions], dtype=float)
+            miss = int(np.isnan(tmp).sum())
+            if miss > 0:
+                if resid_open == "force":
+                    raise ValueError(f"Openness requested (force) but missing for {miss}/{n} regions.")
+                # auto: ignore openness
+            else:
+                use_open = True
+                open_col = open_col0
+                open_vec = np.log1p(np.maximum(tmp, 0.0))
+
+    # Design matrix
+    cols = [np.ones(n, dtype=float), gc]
+    names = ["intercept", "gc"]
+    formula = "y_log ~ 1 + gc"
+
+    if use_length:
+        cols.append(length)
+        names.append("length")
+        formula += " + length"
+
     if use_open:
         cols.append(open_vec)
         names.append("log1p(open)")
-        formula = "y_log ~ 1 + gc + length + log1p(open)"
+        formula += " + log1p(open)"
 
     X = np.vstack(cols).T  # n x p
 
-    # Fit with least squares
+    # Fit OLS via least squares
     beta, *_ = np.linalg.lstsq(X, y_log, rcond=None)
     yhat = X @ beta
     resid = y_log - yhat
 
     # Print coefficient table
-    print(f"Coefficients ({formula}):")
-    for n, b in zip(names, beta):
-        print(f"  {n}: {float(b)}")
-    if use_open:
-        print(f"[Info] openness covariate loaded from --bed using column: {open_col} (coverage: 100%)")
-    else:
-        if open_map:
-            # had a column but incomplete or messy
-            miss = int(np.isnan(np.array([open_map.get(r, np.nan) for r in regions], dtype=float)).sum())
-            print(f"[Info] openness covariate NOT used (missing for {miss}/{len(regions)} regions).")
-        else:
-            print("[Info] openness covariate NOT used (no numeric openness column detected in --bed).")
+    print(f"\nCoefficients ({formula}):")
+    for nm, b in zip(names, beta):
+        print(f"  {nm}: {float(b)}")
 
-    resid_map = {r: float(resid[i]) for i, r in enumerate(regions)}
+    if resid_open == "off":
+        print("[Info] openness covariate: OFF")
+    else:
+        if use_open:
+            print(f"[Info] openness covariate: ON (column='{open_col}', coverage=100%)")
+        else:
+            print("[Info] openness covariate: not used (incomplete coverage or no usable column)")
+
+    # Build residual map
+    out_map = {r: float(resid[i]) for i, r in enumerate(regions)}
     coef_map = {names[i]: float(beta[i]) for i in range(len(names))}
-    return resid_map, coef_map, formula
+
+    if output_mode in {"log_corrected", "intensity_like"}:
+        # Re-center residuals to an "intensity-like" log scale by adding the fitted value at mean covariates.
+        # This keeps the covariate-corrected values comparable in scale to log1p(signal).
+        cov_means = []
+        cov_means.append(1.0)               # intercept
+        cov_means.append(float(np.mean(gc)))
+        if use_length:
+            cov_means.append(float(np.mean(length)))
+        if use_open:
+            cov_means.append(float(np.mean(open_vec)))
+
+        ref = float(np.dot(beta, np.array(cov_means, dtype=float)))
+
+        # corrected log value per region; clamp >=0 for "intensity-like" behavior
+        log_corr = {r: max(0.0, float(v) + ref) for r, v in out_map.items()}
+
+        if output_mode == "log_corrected":
+            out_map = log_corr
+        else:
+            out_map = {r: float(np.expm1(v)) for r, v in log_corr.items()}
+
+    return out_map, coef_map, formula
 
 
 def main(argv=None) -> int:
@@ -474,10 +564,33 @@ def main(argv=None) -> int:
         help="Genome FASTA (required when --residualize is set).",
     )
 
+    # Residualization options (only used when --residualize is set)
+    parser.add_argument(
+        "--resid-use-length",
+        action="store_true",
+        help="Include region length as a covariate during residualization (default: off).",
+    )
+    parser.add_argument(
+        "--resid-open",
+        default="off",
+        choices=("auto", "off", "force"),
+        help="Include openness covariate from --bed during residualization: auto/off/force. "
+             "Forced to 'off' unless --resid-use-length is set.",
+    )
+    parser.add_argument(
+        "--resid-output",
+        default="intensity_like",
+        choices=("resid_log", "log_corrected", "intensity_like"),
+        help="Residualization output scale: "
+             "resid_log (raw residuals in log space), "
+             "log_corrected (recentered log scale), "
+             "intensity_like (nonnegative intensity scale).",
+    )
+
     # NEW:
     parser.add_argument(
         "--summary",
-        default="max",  # keep your current behavior
+        default="max",  
         choices=SUMMARY_CHOICES,
         help="How to summarize signal: max/mean over full interval, or center_max/center_mean over a fixed window.",
     )
@@ -524,8 +637,26 @@ def main(argv=None) -> int:
         )
 
     if args.residualize:
+        if not args.genome_fasta:
+            raise SystemExit("[Error] --genome-fasta is required when --residualize is set.")
+
         sig_map = _read_two_col_map(tmp_out)
-        resid_map, _, _ = residualize_intensities(sig_map, bed_path=args.bed, genome_fa=args.genome_fasta)
+
+        # Enforce: openness only when length is included
+        resid_open = args.resid_open
+        if not args.resid_use_length:
+            if resid_open != "off":
+                print("[Info] --resid-open ignored because --resid-use-length is off (forcing resid_open='off').")
+            resid_open = "off"
+
+        resid_map, _, _ = residualize_intensities(
+            sig_map,
+            bed_path=args.bed,
+            genome_fa=args.genome_fasta,
+            use_length=args.resid_use_length,
+            resid_open=resid_open,
+            output_mode=args.resid_output,
+        )
 
         # Write residualized map to the requested output
         outdir = os.path.dirname(args.output)
