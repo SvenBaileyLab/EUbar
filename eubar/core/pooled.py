@@ -46,7 +46,7 @@ if TYPE_CHECKING:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 
-def call_with_accepted_kwargs(fn, /, *args, **kwargs):
+def call_with_accepted_kwargs(fn, *args, **kwargs):
     """Call ``fn`` with only the kwargs it accepts.
 
     This keeps pooled tools compatible across slightly different helper
