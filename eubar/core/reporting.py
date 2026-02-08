@@ -143,7 +143,7 @@ def print_rows_as_tsv(
     print(df.to_csv(sep="\t", index=False))
 
 
-def plot_aff_motif_effects(rows, save_path):
+def _plot_aff_motif_effects(rows, save_path):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -201,6 +201,98 @@ def plot_aff_motif_effects(rows, save_path):
         yrange = ymax - ymin if ymax != ymin else 1
         padding = yrange * 0.1
         ax.set_ylim(ymin - padding, ymax + padding)
+        ax.set_ylabel(metric)
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+    axs[1].set_xlabel("Genomic Position")
+    axs[0].set_title("Motif Scan: Coefficients and -log10(p-values)")
+
+    step = 10 if region_length > 80 else 5 if region_length > 40 else 1
+    axs[1].set_xticks(range(1, int(region_length) + 1, step))
+    axs[1].set_xlim(0.5, region_length + 0.5)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    print(f"[Info] Figure saved to: {save_path}")
+
+def plot_aff_motif_effects(rows, save_path):
+    import matplotlib
+    import numpy as np
+    import pandas as pd
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    df = pd.DataFrame(
+        [list(r)[:9] for r in rows],
+        columns=[
+            "wildcard_kmer",
+            "filled_kmer",
+            "window_index",
+            "snp_index",
+            "type",
+            "allele",
+            "coef",
+            "pval",
+            "absolute_pos",
+        ],
+    )
+
+    df = df[df["type"] == "AFF"].copy()
+
+    df["coef"] = pd.to_numeric(df["coef"], errors="coerce")
+    df["pval"] = pd.to_numeric(df["pval"], errors="coerce")
+    df = df.dropna(subset=["coef", "pval"]).copy()
+
+    # --- FIX: avoid -log10(0) / NaN / inf ---
+    # Clamp p-values to a tiny positive floor and 1.0 ceiling, and drop non-finite.
+    p = df["pval"].to_numpy(dtype=float)
+    p = np.where(np.isfinite(p), p, np.nan)
+    p = np.clip(p, 1e-300, 1.0)  # floor prevents inf; ceiling keeps sanity
+    df["pval_clamped"] = p
+    df["-log10(pval)"] = -np.log10(df["pval_clamped"])
+    # ----------------------------------------
+
+    df["absolute_position"] = df["window_index"].astype(int) + df["snp_index"].astype(int) + 1
+    region_length = int(df["absolute_position"].max()) if len(df) else 1
+
+    allele_colors = {"A": "black", "C": "red", "G": "green", "T": "blue"}
+
+    fig_width = max(12, region_length * 0.15)
+    fig, axs = plt.subplots(2, 1, figsize=(fig_width, 6), sharex=True)
+
+    for metric, ax in zip(["coef", "-log10(pval)"], axs):
+        for _, row in df.iterrows():
+            x = int(row["absolute_position"])
+            y = row[metric]
+            allele = row["allele"]
+            color = allele_colors.get(allele, "gray")
+            if pd.notna(y) and np.isfinite(float(y)):
+                ax.text(
+                    x,
+                    y,
+                    allele,
+                    color=color,
+                    fontsize=12,
+                    ha="center",
+                    va="center",
+                    fontweight="bold",
+                )
+
+        # --- FIX: compute y-lims using finite values only ---
+        vals = df[metric].to_numpy(dtype=float)
+        finite = np.isfinite(vals)
+        if not np.any(finite):
+            ymin, ymax = 0.0, 1.0
+        else:
+            ymin = float(np.min(vals[finite]))
+            ymax = float(np.max(vals[finite]))
+        yrange = ymax - ymin if ymax != ymin else 1.0
+        padding = yrange * 0.1
+        ax.set_ylim(ymin - padding, ymax + padding)
+        # ----------------------------------------------------
+
         ax.set_ylabel(metric)
         ax.grid(True, linestyle="--", alpha=0.4)
 
