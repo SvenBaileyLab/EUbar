@@ -76,7 +76,7 @@ def run_bigwig_summary_per_interval(
     output_path,
     summary="max",
     window_bp=100,
-    genome=None,
+    genome_size_file=None,
     keep_temp=False,
 ):
     if summary not in SUMMARY_CHOICES:
@@ -90,7 +90,7 @@ def run_bigwig_summary_per_interval(
 
     # Sort A for consistent output order (not required for BigWig querying)
     a = BedTool(dedup_a_bed)
-    a = a.sort(g=genome) if genome else a.sort()
+    a = a.sort(g=genome_size_file) if genome_size_file else a.sort()
 
     # Map our summary modes to pyBigWig's stats
     if summary in ("max", "center_max"):
@@ -159,7 +159,7 @@ def run_bedtools_map_pybedtools(
     output_path,
     summary="max",
     window_bp=100,
-    genome=None,
+    genome_size_file=None,
     keep_temp=False,
 ):
     """
@@ -178,15 +178,15 @@ def run_bedtools_map_pybedtools(
     a = BedTool(dedup_a_bed)
     b = BedTool(b_bedgraph)
 
-    a_sorted = a.sort(g=genome) if genome else a.sort()
-    b_sorted = b.sort(g=genome) if genome else b.sort()
+    a_sorted = a.sort(g=genome_size_file) if genome_size_file else a.sort()
+    b_sorted = b.sort(g=genome_size_file) if genome_size_file else b.sort()
 
     # For center_* summaries, create a windowed-A for mapping
     tmp_center_bed = None
     if summary.startswith("center_"):
         tmp_center_bed = _write_center_window_bed(a_sorted, window_bp=window_bp)
         a_map = BedTool(tmp_center_bed)
-        a_map = a_map.sort(g=genome) if genome else a_map.sort()
+        a_map = a_map.sort(g=genome_size_file) if genome_size_file else a_map.sort()
         map_op = "max" if summary == "center_max" else "mean"
     else:
         a_map = a_sorted
@@ -546,7 +546,7 @@ def main(argv=None) -> int:
     parser.add_argument("--bed", required=True, help="Path to DNase-seq/ATAC-seq BED file (-a)")
     parser.add_argument("--signal", required=True, help="Path to ChIP-seq BedGraph OR BigWig file (-b)")
     parser.add_argument("--output", required=True, help="Output file path")
-    parser.add_argument("--genome", default=None, help="Optional genome chrom sizes file for bedtools sort (-g)")
+    parser.add_argument("--genome_size_file", default=None, help="Optional genome chrom sizes file for bedtools sort (-g)")
     parser.add_argument("--keep_temp", action="store_true", help="Keep temporary files")
 
     parser.add_argument(
@@ -622,7 +622,7 @@ def main(argv=None) -> int:
             tmp_out,
             summary=args.summary,
             window_bp=args.window_bp,
-            genome=args.genome,
+            genome_size_file=args.genome_size_file,
             keep_temp=args.keep_temp,
         )
     else:
@@ -632,7 +632,7 @@ def main(argv=None) -> int:
             tmp_out,
             summary=args.summary,
             window_bp=args.window_bp,
-            genome=args.genome,
+            genome_size_file=args.genome_size_file,
             keep_temp=args.keep_temp,
         )
 

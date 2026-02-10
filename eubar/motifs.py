@@ -339,6 +339,8 @@ def ppm_from_seed_wobble(
     i_to_rank: np.ndarray,
     min_per_base: int,
     beta: float,
+    min_support: int = 1,
+    pseudocount: float = 0.0,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Compute an k-position PPM from reduced E-scores at each position.
 
@@ -371,8 +373,9 @@ def ppm_from_seed_wobble(
         # Allow wobble even if one base is rare/absent (e.g. F=0 for T at pos=7).
         good_bases = [b for b in BASES if int(len(clean_sets[b])) >= min_per_base]
 
-        # If fewer than 2 bases have enough support, we truly can't do a meaningful reduced test
+        # If fewer than 2 bases have enough support, fall back intelligently
         if len(good_bases) < 2:
+            support = {b: int(len(clean_sets[b])) for b in BASES}
             for b in BASES:
                 reduced_rows.append(
                     dict(
@@ -381,11 +384,30 @@ def ppm_from_seed_wobble(
                         variant=seed[:pos] + b + seed[pos + 1 :],
                         E_reduced=np.nan,
                         p=np.nan,
-                        F=int(len(clean_sets[b])),
+                        F=support[b],
                         B=0,
                     )
                 )
-            ppm_rows.append(pd.Series({b: 0.25 for b in BASES}, name=pos))
+
+            # single-base support fallback (only one base has meaningful support)
+            supported = [b for b in BASES if support[b] >= int(min_support)]
+            if len(supported) == 1:
+                dom = supported[0]
+                probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+                probs[dom] = 1.0
+            # seed-prior fallback if any seed base exists at this position
+            elif pos < len(seed) and seed[pos] in BASES:
+                dom = seed[pos]
+                probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+                probs[dom] = 1.0
+            else:
+                probs = pd.Series({b: 0.25 for b in BASES}, dtype=float)
+
+            if pseudocount > 0:
+                probs = probs + float(pseudocount)
+                probs = probs / float(probs.sum())
+
+            ppm_rows.append(pd.Series({b: float(probs[b]) for b in BASES}, name=pos))
             continue
 
         # Otherwise compute E_reduced for supported bases; set unsupported bases to NaN and prob=0.
@@ -441,9 +463,25 @@ def ppm_from_seed_wobble(
 
         s = float(probs.sum())
         if s <= 0:
-            probs = pd.Series({b: 0.25 for b in BASES}, dtype=float)
+            # fallback hierarchy: single-base support -> seed prior -> uniform
+            support = {b: int(len(clean_sets[b])) for b in BASES}
+            supported = [b for b in BASES if support[b] >= int(min_support)]
+            if len(supported) == 1:
+                dom = supported[0]
+                probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+                probs[dom] = 1.0
+            elif pos < len(seed) and seed[pos] in BASES:
+                dom = seed[pos]
+                probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+                probs[dom] = 1.0
+            else:
+                probs = pd.Series({b: 0.25 for b in BASES}, dtype=float)
         else:
             probs = probs / s
+
+        if pseudocount > 0:
+            probs = probs + float(pseudocount)
+            probs = probs / float(probs.sum())
 
         ppm_rows.append(pd.Series({b: float(probs[b]) for b in BASES}, name=pos))
 
@@ -1050,6 +1088,18 @@ def main(argv=None) -> int:
         help="Minimum probe count per base in reduced tests (default: 20)",
     )
     ap.add_argument(
+        "--min-support",
+        type=int,
+        default=1,
+        help="Minimum raw support to treat a base as truly supported in fallback logic (default: 1)",
+    )
+    ap.add_argument(
+        "--pseudocount",
+        type=float,
+        default=0.0,
+        help="Optional pseudocount added to each base probability after calling (default: 0.0)",
+    )
+    ap.add_argument(
         "--beta",
         type=float,
         default=10.0,
@@ -1161,6 +1211,8 @@ def main(argv=None) -> int:
         i_to_rank=ranks.i_to_rank,
         min_per_base=args.min_per_base,
         beta=args.beta,
+        min_support=args.min_support,
+        pseudocount=args.pseudocount,
     )
 
     # If the seed search used wildcards, derive a concrete core consensus to use for optional extension.
