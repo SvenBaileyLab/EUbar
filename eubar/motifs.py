@@ -352,6 +352,7 @@ def ppm_from_seed_wobble(
     beta: float,
     min_support: int = 1,
     pseudocount: float = 0.0,
+    combine_revcomp: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Compute an k-position PPM from reduced E-scores at each position.
 
@@ -374,7 +375,8 @@ def ppm_from_seed_wobble(
             if use_patterns:
                 idx = fg_indices_for_pattern(var, kmer_to_idx, cache=pattern_cache)
             else:
-                idx = kmer_to_idx.get(var)
+                key = canonical_kmer(var) if combine_revcomp else var
+                idx = kmer_to_idx.get(key)
                 if idx is None:
                     idx = np.array([], dtype=int)
             variants[b] = idx
@@ -1265,7 +1267,6 @@ def main(argv=None) -> int:
         help="Output prefix (default: affinity_motif)",
     )
 
-
     ap.add_argument(
         "--pretty-logo",
         action="store_true",
@@ -1328,6 +1329,9 @@ def main(argv=None) -> int:
         seed = args.seed.strip().upper()
         es_df = choose_seed(kmer_to_idx, ranks.i_to_rank, min_F=args.min_F, max_gaps=args.max_gaps)
 
+        if args.combine_revcomp and '.' not in seed:
+            seed = canonical_kmer(seed)
+
     sys.stderr.write(f"[seed] {seed}\n")
 
     # Core seed-and-wobble
@@ -1339,6 +1343,7 @@ def main(argv=None) -> int:
         beta=args.beta,
         min_support=args.min_support,
         pseudocount=args.pseudocount,
+        combine_revcomp=args.combine_revcomp,
     )
 
     # If the seed search used wildcards, derive a concrete core consensus to use for optional extension.
