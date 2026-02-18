@@ -24,6 +24,12 @@ except Exception:
 
 
 BASES = ("A", "C", "G", "T")
+STANDARD_DNA_COLORS = {"A": "#008000", "C": "#0000ff", "G": "#ffa600", "T": "#ff0000"}
+PRETTY_DNA_COLORS   = {"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728"}
+
+
+def _dna_colors(pretty_logo: bool) -> dict:
+    return PRETTY_DNA_COLORS if pretty_logo else STANDARD_DNA_COLORS
 
 
 def reverse_complement(seq: str) -> str:
@@ -64,7 +70,12 @@ def fg_indices_for_pattern(
 
     idx_list: List[np.ndarray] = []
     for kmer, idx in kmer_to_idx.items():
-        if kmer_matches_pattern(kmer, pattern):
+        # IMPORTANT:
+        # When kmers are stored in canonical (combine_revcomp) form, a query
+        # pattern may match either the stored kmer *or* its reverse complement.
+        # If we only test the stored string, revcomp-enabled runs can miss
+        # legitimate matches and fail to extend motifs.
+        if kmer_matches_pattern(kmer, pattern) or kmer_matches_pattern(reverse_complement(kmer), pattern):
             idx_list.append(idx)
 
     if not idx_list:
@@ -578,6 +589,7 @@ def extend_side_greedy(
     min_per_base: int,
     side: str,
     max_steps: int,
+    combine_revcomp: bool = False,
 ) -> Tuple[List[pd.Series], str]:
     """Greedy flank extension using reduced tests on shifted k-mers.
 
@@ -599,12 +611,14 @@ def extend_side_greedy(
             anchor = window[:-1]
             for b in BASES:
                 var = b + anchor
-                variants[b] = kmer_to_idx.get(var, np.array([], dtype=int))
+                key = canonical_kmer(var) if combine_revcomp else var
+                variants[b] = kmer_to_idx.get(key, np.array([], dtype=int))
         elif side == "right":
             anchor = window[1:]
             for b in BASES:
                 var = anchor + b
-                variants[b] = kmer_to_idx.get(var, np.array([], dtype=int))
+                key = canonical_kmer(var) if combine_revcomp else var
+                variants[b] = kmer_to_idx.get(key, np.array([], dtype=int))
         else:
             raise ValueError("side must be 'left' or 'right'")
 
@@ -847,15 +861,33 @@ def write_meme(ppm: pd.DataFrame, out_path: str, motif_name: str) -> None:
             f.write(f"{row['A']:.6f} {row['C']:.6f} {row['G']:.6f} {row['T']:.6f}\n")
 
 
-def plot_logo(ppm: pd.DataFrame, out_png: str, title: str) -> None:
+def plot_logo(ppm: pd.DataFrame, out_png: str, title: str, pretty_logo: bool = False) -> None:
+    """Save a sequence logo for a position-probability matrix (PPM).
+
+    pretty_logo=True applies the light-gray background + fixed A/C/G/T colors you like.
+    """
+    dna_colors = _dna_colors(pretty_logo)
+
     fig, ax = plt.subplots(figsize=(max(6, ppm.shape[0] * 0.6), 2.8))
+
+    L = ppm.shape[0]
+
+    if pretty_logo:
+        bg = "#e6e6e6"
+        fig.patch.set_facecolor(bg)
+        ax.set_facecolor(bg)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+
     if logomaker is not None:
         logo_df = ppm.copy()
         logo_df.index = range(ppm.shape[0])
-        logomaker.Logo(logo_df, ax=ax)
-        ax.set_xticks(range(ppm.shape[0]))
-        ax.set_xticklabels([str(p) for p in ppm.index])
+        # logomaker expects probabilities per base per position
+        logomaker.Logo(logo_df, ax=ax, color_scheme=dna_colors)
         ax.set_ylabel("prob")
+        ax.set_xlabel("pos")
+        ax.set_xticks(np.arange(L))
+        ax.set_xticklabels([str(i) for i in range(L)])
     else:
         # fallback: draw a simple sequence logo using stacked letters
         from matplotlib.textpath import TextPath
@@ -863,7 +895,6 @@ def plot_logo(ppm: pd.DataFrame, out_png: str, title: str) -> None:
         from matplotlib.transforms import Affine2D
         from matplotlib.font_manager import FontProperties
 
-        colors = {"A": "#1b9e77", "C": "#377eb8", "G": "#ff7f00", "T": "#e41a1c"}
         fp = FontProperties(family="DejaVu Sans", weight="bold")
 
         def add_letter(letter: str, x: float, y: float, height: float) -> None:
@@ -871,11 +902,10 @@ def plot_logo(ppm: pd.DataFrame, out_png: str, title: str) -> None:
                 return
             tp = TextPath((0, 0), letter, size=1, prop=fp)
             bb = tp.get_extents()
-            # Each column is ~1.0 wide; keep some padding
             sx = 0.9 / max(bb.width, 1e-6)
             sy = height / max(bb.height, 1e-6)
             trans = Affine2D().scale(sx, sy).translate(x + 0.05, y)
-            patch = PathPatch(tp, lw=0, facecolor=colors.get(letter, "black"), transform=trans + ax.transData)
+            patch = PathPatch(tp, lw=0, facecolor=dna_colors.get(letter, "black"), transform=trans + ax.transData)
             ax.add_patch(patch)
 
         L = ppm.shape[0]
@@ -888,19 +918,106 @@ def plot_logo(ppm: pd.DataFrame, out_png: str, title: str) -> None:
 
         ax.set_xlim(0, L)
         ax.set_ylim(0, 1)
-        ax.set_xticks(np.arange(L) + 0.5)
-        ax.set_xticklabels([str(p) for p in ppm.index])
+        ax.set_xticks(np.arange(L))
+        ax.set_xticklabels([str(i) for i in range(L)])
         ax.set_yticks([0, 0.5, 1.0])
         ax.set_ylabel("prob")
         ax.set_xlabel("pos")
-        for spine in ["top", "right"]:
+        for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
-
-    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
 
+
+def plot_enrichment_bars(
+    reduced_full_df: pd.DataFrame,
+    out_path: str,
+    pretty_logo: bool = False,
+    title: Optional[str] = None,
+) -> None:
+    """Plot grouped bars of reduced enrichment (E_reduced) for A/C/G/T at each motif position.
+
+    Notes:
+      - We remap the 'pos' values from reduced_full_df to 0..L-1 so the x-axis matches the logo.
+      - If pretty_logo is True, use the same DNA colors + light gray background as the logo.
+    """
+    if reduced_full_df is None or len(reduced_full_df) == 0:
+        return
+
+    # Expect columns: pos, base, E_reduced
+    df = reduced_full_df.copy()
+    if "pos" not in df.columns or "base" not in df.columns or "E_reduced" not in df.columns:
+        return
+
+    # Keep only valid bases
+    df = df[df["base"].isin(BASES)].copy()
+    if len(df) == 0:
+        return
+
+    # Aggregate across steps/sides if present (take mean per pos/base)
+    df_agg = (
+        df.groupby(["pos", "base"], as_index=False)["E_reduced"]
+          .mean()
+    )
+
+    # Build pivot: rows=pos (original), cols=base
+    pivot = df_agg.pivot(index="pos", columns="base", values="E_reduced").sort_index()
+
+    # Map original positions to 0..L-1 for display to match logo
+    orig_positions = list(pivot.index)
+    pos_map = {p: i for i, p in enumerate(orig_positions)}
+    pivot = pivot.reset_index().assign(pos0=lambda d: d["pos"].map(pos_map)).set_index("pos0")
+    pivot.index.name = "pos"
+
+    L = pivot.shape[0]
+    if L == 0:
+        return
+
+    # Ensure all bases present as columns
+    for b in BASES:
+        if b not in pivot.columns:
+            pivot[b] = 0.0
+        pivot = pivot.loc[:, list(BASES)]
+
+    # Colors
+    dna_colors = _dna_colors(pretty_logo)
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    fig_w = max(8.0, 0.8 * L)
+    fig, ax = plt.subplots(figsize=(fig_w, 3.6), dpi=150)
+
+    if pretty_logo:
+        ax.set_facecolor("#e6e6e6")
+        fig.patch.set_facecolor("#e6e6e6")
+
+    x = np.arange(L, dtype=float)
+    width = 0.18
+    offsets = {"A": -1.5*width, "C": -0.5*width, "G": 0.5*width, "T": 1.5*width}
+
+    for b in BASES:
+        ax.bar(x + offsets[b], pivot[b].to_numpy(dtype=float), width=width, label=b, color=dna_colors.get(b))
+
+    ax.axhline(0.0, linewidth=1.0)
+    ax.set_xlim(-0.6, L - 0.4)
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(i) for i in range(L)])
+    ax.set_xlabel("pos")
+    ax.set_ylabel("Enrichment score")
+
+    if title:
+        ax.set_title(title)
+
+    ax.legend(ncol=4, loc="upper center", bbox_to_anchor=(0.5, 1.18), frameon=False)
+
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
 
 def plot_seed_enrichment_curve(
     seed: str,
@@ -990,7 +1107,6 @@ def plot_escore_histogram(es_df: pd.DataFrame, out_png: str, title: str) -> None
     ax.hist(vals, bins=60)
     ax.set_xlabel("E-score")
     ax.set_ylabel("count")
-    ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
@@ -1065,10 +1181,13 @@ def main(argv=None) -> int:
     ap.add_argument("--kmers", required=True, help="K-mer positions file")
     ap.add_argument("--kmer-size", type=int, default=8, help="k-mer size (default: 8)")
     ap.add_argument(
-        "--combine-revcomp",
-        action="store_true",
-        help="Combine k-mer and its reverse complement into one key (default: off)",
+        "--no-combine-revcomp",
+        dest="combine_revcomp",
+        action="store_false",
+        help="Do NOT combine k-mer and its reverse complement (default: combine).",
     )
+    ap.set_defaults(combine_revcomp=True)
+
     ap.add_argument(
         "--min-F",
         type=int,
@@ -1144,6 +1263,13 @@ def main(argv=None) -> int:
         "--prefix",
         default="affinity_motif",
         help="Output prefix (default: affinity_motif)",
+    )
+
+
+    ap.add_argument(
+        "--pretty-logo",
+        action="store_true",
+        help="Render a prettier motif logo (light gray background + fixed DNA colors)",
     )
     ap.add_argument(
         "--seed",
@@ -1280,6 +1406,7 @@ def main(argv=None) -> int:
     seed_roc_path = os.path.join(args.outdir, f"{args.prefix}.seed_roc.png")
     seed_hist_path = os.path.join(args.outdir, f"{args.prefix}.seed_escore_hist.png")
     qc_path = os.path.join(args.outdir, f"{args.prefix}.motif_vs_E.png")
+    enrich_bar_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment.png")
 
     reduced_path = os.path.join(args.outdir, f"{args.prefix}.reduced.tsv")
 
@@ -1312,7 +1439,8 @@ def main(argv=None) -> int:
     reduced_full_df.to_csv(reduced_full_path, sep="\t", index=False)
 
     write_meme(ppm.reset_index(drop=True), meme_path, motif_name=consensus)
-    plot_logo(ppm.reset_index(drop=True), logo_path, title=f"{consensus} (seed={seed})")
+    plot_logo(ppm.reset_index(drop=True), logo_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo))
+    plot_enrichment_bars(reduced_full_df, enrich_bar_path, title=None, pretty_logo=bool(args.pretty_logo))
 
     # Seed enrichment plots + histogram of candidate E-scores
     fg_seed = fg_indices_for_pattern(seed, kmer_to_idx)
@@ -1331,6 +1459,7 @@ def main(argv=None) -> int:
     sys.stderr.write(f"[ok] PPM:   {ppm_path}\n")
     sys.stderr.write(f"[ok] MEME:  {meme_path}\n")
     sys.stderr.write(f"[ok] logo:  {logo_path}\n")
+    sys.stderr.write(f"[ok] reduced enrichment plot: {enrich_bar_path}\n")
     sys.stderr.write(f"[ok] seed curve: {seed_curve_path}\n")
     sys.stderr.write(f"[ok] seed ROC:   {seed_roc_path}\n")
     sys.stderr.write(f"[ok] E-score hist: {seed_hist_path}\n")
