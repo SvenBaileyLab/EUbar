@@ -352,7 +352,6 @@ def ppm_from_seed_wobble(
     beta: float,
     min_support: int = 1,
     pseudocount: float = 0.0,
-    combine_revcomp: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Compute an k-position PPM from reduced E-scores at each position.
 
@@ -375,8 +374,7 @@ def ppm_from_seed_wobble(
             if use_patterns:
                 idx = fg_indices_for_pattern(var, kmer_to_idx, cache=pattern_cache)
             else:
-                key = canonical_kmer(var) if combine_revcomp else var
-                idx = kmer_to_idx.get(key)
+                idx = kmer_to_idx.get(var)
                 if idx is None:
                     idx = np.array([], dtype=int)
             variants[b] = idx
@@ -863,12 +861,63 @@ def write_meme(ppm: pd.DataFrame, out_path: str, motif_name: str) -> None:
             f.write(f"{row['A']:.6f} {row['C']:.6f} {row['G']:.6f} {row['T']:.6f}\n")
 
 
-def plot_logo(ppm: pd.DataFrame, out_png: str, title: str, pretty_logo: bool = False) -> None:
-    """Save a sequence logo for a position-probability matrix (PPM).
 
-    pretty_logo=True applies the light-gray background + fixed A/C/G/T colors you like.
+def ppm_to_bits_matrix(ppm: pd.DataFrame, eps: float = 1e-12) -> pd.DataFrame:
+    """Convert a PPM (probabilities) to a per-letter height matrix in *bits*.
+
+    For each position i:
+      IC_bits(i) = log2(4) - H(i), where H(i) = -Σ_b p(b,i) log2 p(b,i)
+      height(b,i) = p(b,i) * IC_bits(i)
+
+    This is the standard "information content" sequence-logo height convention.
     """
+    mat = ppm.copy()
+    # Ensure columns are A,C,G,T and numeric
+    mat = mat.loc[:, ~mat.columns.duplicated()].copy()
+    mat = mat[list(BASES)].astype(float)
+
+    # Normalize each row defensively
+    row_sums = mat.sum(axis=1).replace(0.0, np.nan)
+    mat = mat.div(row_sums, axis=0)
+
+    p = np.clip(mat.to_numpy(dtype=float), eps, 1.0)
+    H = -(p * np.log2(p)).sum(axis=1)          # entropy in bits
+    IC = np.log2(4.0) - H                      # max 2 bits for DNA
+    heights = p * IC[:, None]                  # per-letter heights
+
+    out = pd.DataFrame(heights, columns=list(BASES), index=ppm.index)
+    out.index.name = ppm.index.name
+    return out
+
+
+def plot_logo(
+    ppm: pd.DataFrame,
+    out_png: str,
+    title: str,
+    pretty_logo: bool = False,
+    mode: str = "prob",
+) -> None:
+    """Save a sequence logo.
+
+    mode:
+      - "prob": y-axis is probability (0..1)
+      - "bits": y-axis is information content in bits (0..2), using height(b)=p(b)*IC_bits
+    """
+    mode = str(mode).lower().strip()
+    if mode not in ("prob", "bits"):
+        raise ValueError("mode must be 'prob' or 'bits'")
+
     dna_colors = _dna_colors(pretty_logo)
+
+    # Choose the matrix to plot
+    if mode == "bits":
+        logo_mat = ppm_to_bits_matrix(ppm)
+        y_label = "bits"
+        y_max = 2.0
+    else:
+        logo_mat = ppm.copy()
+        y_label = "prob"
+        y_max = 1.0
 
     fig, ax = plt.subplots(figsize=(max(6, ppm.shape[0] * 0.6), 2.8))
 
@@ -882,14 +931,14 @@ def plot_logo(ppm: pd.DataFrame, out_png: str, title: str, pretty_logo: bool = F
             ax.spines[spine].set_visible(False)
 
     if logomaker is not None:
-        logo_df = ppm.copy()
+        logo_df = logo_mat.copy()
         logo_df.index = range(ppm.shape[0])
-        # logomaker expects probabilities per base per position
         logomaker.Logo(logo_df, ax=ax, color_scheme=dna_colors)
-        ax.set_ylabel("prob")
+        ax.set_ylabel(y_label)
         ax.set_xlabel("pos")
         ax.set_xticks(np.arange(L))
         ax.set_xticklabels([str(i) for i in range(L)])
+        ax.set_ylim(0, y_max)
     else:
         # fallback: draw a simple sequence logo using stacked letters
         from matplotlib.textpath import TextPath
@@ -910,23 +959,23 @@ def plot_logo(ppm: pd.DataFrame, out_png: str, title: str, pretty_logo: bool = F
             patch = PathPatch(tp, lw=0, facecolor=dna_colors.get(letter, "black"), transform=trans + ax.transData)
             ax.add_patch(patch)
 
-        L = ppm.shape[0]
+        L = logo_mat.shape[0]
         for i in range(L):
-            probs = {b: float(ppm.iloc[i][b]) for b in BASES}
+            heights = {b: float(logo_mat.iloc[i][b]) for b in BASES}
             y0 = 0.0
-            for letter, h in sorted(probs.items(), key=lambda kv: kv[1]):
+            for letter, h in sorted(heights.items(), key=lambda kv: kv[1]):
                 add_letter(letter, x=float(i), y=y0, height=h)
                 y0 += h
 
         ax.set_xlim(0, L)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(0, y_max)
         ax.set_xticks(np.arange(L))
         ax.set_xticklabels([str(i) for i in range(L)])
-        ax.set_yticks([0, 0.5, 1.0])
-        ax.set_ylabel("prob")
+        ax.set_ylabel(y_label)
         ax.set_xlabel("pos")
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
+
     fig.tight_layout()
     fig.savefig(out_png, dpi=200)
     plt.close(fig)
@@ -1267,6 +1316,7 @@ def main(argv=None) -> int:
         help="Output prefix (default: affinity_motif)",
     )
 
+
     ap.add_argument(
         "--pretty-logo",
         action="store_true",
@@ -1329,9 +1379,6 @@ def main(argv=None) -> int:
         seed = args.seed.strip().upper()
         es_df = choose_seed(kmer_to_idx, ranks.i_to_rank, min_F=args.min_F, max_gaps=args.max_gaps)
 
-        if args.combine_revcomp and '.' not in seed:
-            seed = canonical_kmer(seed)
-
     sys.stderr.write(f"[seed] {seed}\n")
 
     # Core seed-and-wobble
@@ -1343,7 +1390,6 @@ def main(argv=None) -> int:
         beta=args.beta,
         min_support=args.min_support,
         pseudocount=args.pseudocount,
-        combine_revcomp=args.combine_revcomp,
     )
 
     # If the seed search used wildcards, derive a concrete core consensus to use for optional extension.
@@ -1406,7 +1452,10 @@ def main(argv=None) -> int:
     # Write outputs
     ppm_path = os.path.join(args.outdir, f"{args.prefix}.ppm.tsv")
     meme_path = os.path.join(args.outdir, f"{args.prefix}.meme")
-    logo_path = os.path.join(args.outdir, f"{args.prefix}.logo.png")
+    logo_prob_path = os.path.join(args.outdir, f"{args.prefix}.logo_prob.png")
+    logo_bits_path = os.path.join(args.outdir, f"{args.prefix}.logo_bits.png")
+    # Back-compat: keep the old name as the probability logo
+    logo_path = logo_prob_path
     seed_curve_path = os.path.join(args.outdir, f"{args.prefix}.seed_enrichment_curve.png")
     seed_roc_path = os.path.join(args.outdir, f"{args.prefix}.seed_roc.png")
     seed_hist_path = os.path.join(args.outdir, f"{args.prefix}.seed_escore_hist.png")
@@ -1444,7 +1493,8 @@ def main(argv=None) -> int:
     reduced_full_df.to_csv(reduced_full_path, sep="\t", index=False)
 
     write_meme(ppm.reset_index(drop=True), meme_path, motif_name=consensus)
-    plot_logo(ppm.reset_index(drop=True), logo_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo))
+    plot_logo(ppm.reset_index(drop=True), logo_prob_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="prob")
+    plot_logo(ppm.reset_index(drop=True), logo_bits_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="bits")
     plot_enrichment_bars(reduced_full_df, enrich_bar_path, title=None, pretty_logo=bool(args.pretty_logo))
 
     # Seed enrichment plots + histogram of candidate E-scores
