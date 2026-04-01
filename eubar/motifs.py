@@ -890,6 +890,34 @@ def ppm_to_bits_matrix(ppm: pd.DataFrame, eps: float = 1e-12) -> pd.DataFrame:
     return out
 
 
+def reverse_complement_ppm(ppm: pd.DataFrame) -> pd.DataFrame:
+    """Return a reverse-complemented copy of a PPM/height matrix."""
+    rc = ppm.copy().iloc[::-1].reset_index(drop=True)
+    col_map = {"A": "T", "C": "G", "G": "C", "T": "A"}
+    rc = rc.rename(columns=col_map)
+    rc = rc[[b for b in BASES if b in rc.columns]]
+    return rc
+
+
+def reverse_complement_reduced_df(reduced_full_df: pd.DataFrame) -> pd.DataFrame:
+    """Reverse-complement reduced enrichment table for plotting."""
+    if reduced_full_df is None or reduced_full_df.empty:
+        return reduced_full_df.copy()
+
+    rc = reduced_full_df.copy()
+    pos_vals = sorted(rc["pos"].dropna().astype(int).unique())
+    pos_map = {old: new for old, new in zip(pos_vals, reversed(pos_vals))}
+    rc["pos"] = rc["pos"].astype(int).map(pos_map)
+
+    base_map = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    rc["base"] = rc["base"].map(lambda b: base_map.get(b, b))
+
+    sort_cols = [c for c in ["pos", "side", "base"] if c in rc.columns]
+    if sort_cols:
+        rc = rc.sort_values(sort_cols).reset_index(drop=True)
+    return rc
+
+
 def plot_logo(
     ppm: pd.DataFrame,
     out_png: str,
@@ -934,10 +962,11 @@ def plot_logo(
         logo_df = logo_mat.copy()
         logo_df.index = range(ppm.shape[0])
         logomaker.Logo(logo_df, ax=ax, color_scheme=dna_colors)
-        ax.set_ylabel(y_label)
-        ax.set_xlabel("pos")
+        ax.set_ylabel(y_label, fontsize=18, fontfamily="Carlito")
+        ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
         ax.set_xticks(np.arange(L))
-        ax.set_xticklabels([str(i) for i in range(L)])
+        ax.set_xticklabels([str(i) for i in range(1, L + 1)], rotation=90, fontsize=18, fontfamily="Carlito")
+        ax.set_yticklabels([f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito")
         ax.set_ylim(0, y_max)
     else:
         # fallback: draw a simple sequence logo using stacked letters
@@ -946,7 +975,7 @@ def plot_logo(
         from matplotlib.transforms import Affine2D
         from matplotlib.font_manager import FontProperties
 
-        fp = FontProperties(family="DejaVu Sans", weight="bold")
+        fp = FontProperties(family="Carlito", weight="bold")
 
         def add_letter(letter: str, x: float, y: float, height: float) -> None:
             if height <= 0:
@@ -970,9 +999,10 @@ def plot_logo(
         ax.set_xlim(0, L)
         ax.set_ylim(0, y_max)
         ax.set_xticks(np.arange(L))
-        ax.set_xticklabels([str(i) for i in range(L)])
-        ax.set_ylabel(y_label)
-        ax.set_xlabel("pos")
+        ax.set_xticklabels([str(i) for i in range(1, L + 1)], rotation=90, fontsize=18, fontfamily="Carlito")
+        ax.set_ylabel(y_label, fontsize=18, fontfamily="Carlito")
+        ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
+        ax.set_yticklabels([f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito")
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
 
@@ -1054,8 +1084,8 @@ def plot_enrichment_bars(
     ax.axhline(0.0, linewidth=1.0)
     ax.set_xlim(-0.6, L - 0.4)
     ax.set_xticks(x)
-    ax.set_xticklabels([str(i) for i in range(L)])
-    ax.set_xlabel("pos")
+    ax.set_xticklabels([str(i) for i in range(1, L + 1)], rotation=90, fontsize=18, fontfamily="Carlito")
+    ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
     ax.set_ylabel("Enrichment score")
 
     if title:
@@ -1454,6 +1484,8 @@ def main(argv=None) -> int:
     meme_path = os.path.join(args.outdir, f"{args.prefix}.meme")
     logo_prob_path = os.path.join(args.outdir, f"{args.prefix}.logo_prob.png")
     logo_bits_path = os.path.join(args.outdir, f"{args.prefix}.logo_bits.png")
+    logo_prob_rc_path = os.path.join(args.outdir, f"{args.prefix}.logo_prob_rc.png")
+    logo_bits_rc_path = os.path.join(args.outdir, f"{args.prefix}.logo_bits_rc.png")
     # Back-compat: keep the old name as the probability logo
     logo_path = logo_prob_path
     seed_curve_path = os.path.join(args.outdir, f"{args.prefix}.seed_enrichment_curve.png")
@@ -1461,6 +1493,7 @@ def main(argv=None) -> int:
     seed_hist_path = os.path.join(args.outdir, f"{args.prefix}.seed_escore_hist.png")
     qc_path = os.path.join(args.outdir, f"{args.prefix}.motif_vs_E.png")
     enrich_bar_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment.png")
+    enrich_bar_rc_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment_rc.png")
 
     reduced_path = os.path.join(args.outdir, f"{args.prefix}.reduced.tsv")
 
@@ -1492,10 +1525,16 @@ def main(argv=None) -> int:
     reduced_df.to_csv(reduced_path, sep="\t", index=False)
     reduced_full_df.to_csv(reduced_full_path, sep="\t", index=False)
 
-    write_meme(ppm.reset_index(drop=True), meme_path, motif_name=consensus)
-    plot_logo(ppm.reset_index(drop=True), logo_prob_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="prob")
-    plot_logo(ppm.reset_index(drop=True), logo_bits_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="bits")
+    ppm_normal = ppm.reset_index(drop=True)
+    ppm_rc = reverse_complement_ppm(ppm_normal)
+    write_meme(ppm_normal, meme_path, motif_name=consensus)
+    plot_logo(ppm_normal, logo_prob_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="prob")
+    plot_logo(ppm_normal, logo_bits_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="bits")
+    plot_logo(ppm_rc, logo_prob_rc_path, title=f"{consensus} (seed={seed}) [RC]", pretty_logo=bool(args.pretty_logo), mode="prob")
+    plot_logo(ppm_rc, logo_bits_rc_path, title=f"{consensus} (seed={seed}) [RC]", pretty_logo=bool(args.pretty_logo), mode="bits")
     plot_enrichment_bars(reduced_full_df, enrich_bar_path, title=None, pretty_logo=bool(args.pretty_logo))
+    reduced_full_df_rc = reverse_complement_reduced_df(reduced_full_df)
+    plot_enrichment_bars(reduced_full_df_rc, enrich_bar_rc_path, title=None, pretty_logo=bool(args.pretty_logo))
 
     # Seed enrichment plots + histogram of candidate E-scores
     fg_seed = fg_indices_for_pattern(seed, kmer_to_idx)
