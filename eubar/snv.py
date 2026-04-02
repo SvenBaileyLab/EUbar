@@ -65,68 +65,134 @@ def _format_pval(p: float, stat: float = math.nan) -> str:
     return "<1e-300"
 
 
-def _best_pval_summary_rows(rows):
-    """Return one summary row per (label,type) x allele by taking the window with smallest p-value.
+def _safe_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return math.nan
 
-    This is meant to mimic snv_pooled's output shape, but using the per-window SNV results from snv.py.
+
+
+def _parse_ref_alt_from_snv(snv_str: str):
+    try:
+        allele_part = snv_str.split(":", 2)[2]
+        ref, alt = allele_part.split(">", 1)
+        ref = ref.strip().upper()
+        alt = alt.strip().upper()
+        if ref in {"A", "C", "G", "T"} and alt in {"A", "C", "G", "T"}:
+            return ref, alt
+    except Exception:
+        pass
+    return None, None
+
+
+
+def _best_supported_motif_pos(rows, snv_str: str):
+    """Choose one motif position per SNP using ALT AFF first, then same-position RAND support.
+
+    Current compatibility behavior:
+      - keep the old 8-row output shape (AFF/RAND x A/C/G/T)
+      - but force all rows to come from one *shared* motif_pos chosen with the user's
+        intended SNP-level logic.
     """
+    ref, alt = _parse_ref_alt_from_snv(snv_str)
+    if alt is None:
+        return None
 
-    # collect by (label, allele)
-    # store: (pval, coef, stat)
-    best = {}  # (label, allele) -> (pval, coef, stat)
+    by_key = {}
+    candidates = []
 
     for r in rows:
         label = r.get("label", "AFF")
         allele = r.get("allele")
-        if allele not in ("A", "C", "G", "T"):
+        if label not in ("AFF", "RAND") or allele not in ("A", "C", "G", "T"):
             continue
 
-        # parse pval/coef (rows can contain 'NA' strings)
-        p = r.get("pval")
-        c = r.get("coef")
+        motif_pos = r.get("motif_pos")
         try:
-            p = float(p)
+            motif_pos = int(motif_pos)
         except Exception:
-            p = math.nan
-        try:
-            c = float(c)
-        except Exception:
-            c = math.nan
+            continue
 
+        p = _safe_float(r.get("pval"))
+        c = _safe_float(r.get("coef"))
         stat = _extract_stat(r)
 
-        key = (label, allele)
+        parsed = {
+            "type": label,
+            "allele": allele,
+            "effect": c,
+            "pval": p,
+            "stat": stat,
+            "motif_pos": motif_pos,
+        }
+        by_key[(motif_pos, label, allele)] = parsed
 
-        if math.isnan(p):
-            # keep NaN only if we have nothing yet
-            if key not in best:
-                best[key] = (math.nan, c, stat)
-            continue
+        if label == "AFF" and allele == alt and not math.isnan(p):
+            candidates.append((p, -abs(c) if not math.isnan(c) else 0.0, motif_pos))
 
-        if key not in best:
-            best[key] = (p, c, stat)
-            continue
+    if not candidates:
+        return None
 
-        prev_p, prev_c, prev_stat = best[key]
-        # prefer any numeric p over NaN, and smaller p wins
-        if math.isnan(prev_p) or p < prev_p:
-            best[key] = (p, c, stat)
-        else:
-            # keep previous best
-            best[key] = (prev_p, prev_c, prev_stat)
+    candidates.sort()
 
-    # emit in stable order
+    def _passes_rand_support(motif_pos: int) -> bool:
+        if ref is None:
+            return False
+        alt_rand = by_key.get((motif_pos, "RAND", alt))
+        ref_rand = by_key.get((motif_pos, "RAND", ref))
+        if alt_rand is None or ref_rand is None:
+            return False
+        alt_p = alt_rand["pval"]
+        ref_p = ref_rand["pval"]
+        alt_c = alt_rand["effect"]
+        ref_c = ref_rand["effect"]
+        return (
+            not math.isnan(alt_p) and not math.isnan(ref_p)
+            and not math.isnan(alt_c) and not math.isnan(ref_c)
+            and alt_p < 0.05 and ref_p < 0.05
+            and alt_c > 0.0 and ref_c > 0.0
+        )
+
+    for _, _, motif_pos in candidates:
+        if _passes_rand_support(motif_pos):
+            return motif_pos
+
+    return candidates[0][2]
+
+
+
+def _best_pval_summary_rows(rows, snv_str: str):
+    """Return one summary row per (type, allele), all taken from one chosen motif position."""
+
+    chosen_pos = _best_supported_motif_pos(rows, snv_str)
     out = []
+
     for label in ("AFF", "RAND"):
         for allele in ("A", "C", "G", "T"):
-            p, c, stat = best.get((label, allele), (math.nan, math.nan, math.nan))
-            out.append({"type": label, "allele": allele, "effect": c, "pval": p, "stat": stat})
+            best = None
+            if chosen_pos is not None:
+                for r in rows:
+                    if (
+                        r.get("label", "AFF") == label
+                        and r.get("allele") == allele
+                        and _safe_float(r.get("motif_pos")) == float(chosen_pos)
+                    ):
+                        p = _safe_float(r.get("pval"))
+                        c = _safe_float(r.get("coef"))
+                        stat = _extract_stat(r)
+                        best = {"type": label, "allele": allele, "effect": c, "pval": p, "stat": stat}
+                        break
+
+            if best is None:
+                best = {"type": label, "allele": allele, "effect": math.nan, "pval": math.nan, "stat": math.nan}
+            out.append(best)
     return out
 
 
 def _print_best_pval_table(snv_str, rows, *, include_rand=True):
     """Print a snv_pooled-like table: snv, type, allele, effect, pval."""
-    summary = _best_pval_summary_rows(rows)
+    summary = _best_pval_summary_rows(rows, snv_str)
     for r in summary:
         if (not include_rand) and r["type"] == "RAND":
             continue
