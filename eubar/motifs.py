@@ -1259,7 +1259,7 @@ def main(argv=None) -> int:
         description="Seed-and-wobble motif discovery from probe intensities + kmer occurrence index."
     )
     ap.add_argument("--intensities", required=True, help="Probe intensity file")
-    ap.add_argument("--kmers", required=True, help="K-mer positions file")
+    ap.add_argument("--array", "--kmers", dest="array", required=True, help="Path to k-mer array file mapping k-mers to genomic regions")
     ap.add_argument("--kmer-size", type=int, default=8, help="k-mer size (default: 8)")
     ap.add_argument(
         "--no-combine-revcomp",
@@ -1384,7 +1384,7 @@ def main(argv=None) -> int:
     intensities = read_intensities(args.intensities)
     ranks = build_probe_ranks(intensities)
 
-    kmer_positions = read_unique_kmer_positions(args.kmers)
+    kmer_positions = read_unique_kmer_positions(args.array)
 
     # basic k-mer length sanity
     kmer_positions = {k: v for k, v in kmer_positions.items() if len(k) == args.kmer_size}

@@ -196,10 +196,10 @@ def _pooled_scan_legacy_rows(
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Refactored scan-mode motif regression")
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
-    p.add_argument("--kmerPositions", required=True, help="Path to k-mer array file mapping kmers to genomic regions")
+    p.add_argument("--array", "--kmerPositions", dest="array", required=True, help="Path to k-mer array file mapping k-mers to genomic regions")
     p.add_argument("--genome", required=True, help="FASTA genome file")
     p.add_argument("--region", required=True, help="chr:start-end (1-based inclusive)")
-    p.add_argument("--kmer_size", type=int, default=8, help="K-mer size (default: 8)")
+    p.add_argument("--kmer-size", "--kmer_size", dest="kmer_size", type=int, default=8, help="K-mer size (default: 8)")
 
     # Default matches snv_pooled: OLS on log1p(y).
     p.add_argument("--mode", choices=["ols", "nb"], default="ols", help="Regression mode (ols or nb)")
@@ -216,7 +216,7 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     intens = IntensityTable.from_file(args.intensities)
-    kmers = KmerIndex.from_file(args.kmerPositions)
+    kmers = KmerIndex.from_file(args.array)
 
     region = RegionWindow.from_region_string(args.region, args.genome, reverse=args.reverse)
     matcher = MotifMatcher(kmers.kmers)

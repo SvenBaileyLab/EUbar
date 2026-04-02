@@ -14,7 +14,7 @@ eubar <command> [args...]
 - `intensities` — compute per-region intensities from a BedGraph or BigWig signal track
 - `scan` — scan a genomic region for motif effects using regression
 - `snv` — evaluate motif effects for one or more SNVs
-- `motifs` — perform seed-and-wobble motif discovery from probe intensities and k-mer occurrences
+- `motifs` — perform seed-and-wobble motif discovery from probe intensities and the array file
 
 ## Installation
 
@@ -38,7 +38,7 @@ A common EUbar analysis has three stages:
 2. **Compute probe intensities** from a matching signal track.
 3. **Run analysis** with either `snv`, `scan`, or `motifs`.
 
-### 1) Build the k-mer array
+### 1) Build the array file
 
 Use `array` to scan each region in a BED file and record where each k-mer occurs.
 
@@ -57,7 +57,7 @@ Required inputs:
 
 Main output:
 
-- k-mer positions file mapping each k-mer to one or more genomic regions and offsets
+- array file mapping each k-mer to one or more genomic regions and offsets
 
 ### 2) Compute region intensities
 
@@ -86,7 +86,7 @@ Use `snv` to evaluate one or more variants in `chr:pos:ref>alt` format.
 ```bash
 eubar snv \
   --intensities probe_intensities.tsv \
-  --kmerPositions regions_8mer.txt \
+  --array regions_8mer.txt \
   --genome hg38.fa \
   --snv-list "chr5:1295113:C>T"
 ```
@@ -96,7 +96,7 @@ You can also provide a file of variants:
 ```bash
 eubar snv \
   --intensities probe_intensities.tsv \
-  --kmerPositions regions_8mer.txt \
+  --array regions_8mer.txt \
   --genome hg38.fa \
   --snv-list-file snvs.tsv
 ```
@@ -115,7 +115,7 @@ Use `scan` to test motif effects across a genomic interval.
 ```bash
 eubar scan \
   --intensities probe_intensities.tsv \
-  --kmerPositions regions_8mer.txt \
+  --array regions_8mer.txt \
   --genome hg38.fa \
   --region chr5:1295105-1295140
 ```
@@ -129,12 +129,12 @@ Useful options:
 
 ### 3C) Run motif discovery
 
-Use `motifs` to derive an affinity-associated motif from the probe intensity and k-mer index files.
+Use `motifs` to derive an affinity-associated motif from the probe intensity and array files.
 
 ```bash
 eubar motifs \
   --intensities probe_intensities.tsv \
-  --kmers regions_8mer.txt \
+  --array regions_8mer.txt \
   --kmer-size 8 \
   --outdir motif_results \
   --prefix GABPA
@@ -161,7 +161,7 @@ Used by `array`, `scan`, and `snv`.
 
 Expected format: reference genome in FASTA format.
 
-### K-mer positions file
+### Array file
 
 Produced by `array`; used by `scan`, `snv`, and `motifs`.
 
@@ -187,8 +187,9 @@ chr8:128748315:G>A
 ## Notes
 
 - `array` and `intensities` are intended to be run on matched region definitions.
-- `scan` and `snv` both depend on the k-mer positions and intensity files generated upstream.
+- `scan`, `snv`, and `motifs` all depend on the array and intensity files generated upstream.
 - Command-specific help is available with `eubar <command> --help`.
+- Older argument names may still work as compatibility aliases, but the preferred public names are `--array` and `--kmer-size`.
 
 ## License
 
@@ -196,11 +197,4 @@ GNU General Public License v3.0.
 
 ## Citation
 
-If you use **EUbar** in your research, please cite:
-
-> **[HisTrader: A Tool to Identify Nucleosome Free Regions from ChIP-Seq of Histone Post-Translational Modifications]**  
-> [Eftyhios Kirbizakis and Swneke Bailey]  
-> [..., 2026]  
-> [https://doi.org/...]  
-
----
+If you use **EUbar** in your research, please cite the associated manuscript when available.

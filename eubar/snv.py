@@ -292,11 +292,11 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Run motif regression on SNV(s)")
     group = p.add_mutually_exclusive_group(required=True)
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
-    p.add_argument("--kmerPositions", required=True, help="Path to k-mer array file mapping kmers to genomic regions")
+    p.add_argument("--array", "--kmerPositions", dest="array", required=True, help="Path to k-mer array file mapping k-mers to genomic regions")
     p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
     group.add_argument("--snv-list", help="Comma-separated list of SNVs in chr:pos:ref>alt format")
     group.add_argument("--snv-list-file", help="Optional file with SNVs, one per line in chr:pos:ref>alt format")
-    p.add_argument("--kmer_size", type=int, default=8, help="K-mer size (default: 8)")
+    p.add_argument("--kmer-size", "--kmer_size", dest="kmer_size", type=int, default=8, help="K-mer size (default: 8)")
     p.add_argument("--rand-n", type=int, default=500, help="Number of random probes to use for RAND regression (default: 500)")
     p.add_argument("--no-rand", action="store_true", help="Skip RAND regression and only output AFF (still prints the motif-effect table)")
     p.add_argument(
@@ -315,7 +315,7 @@ def main(argv=None) -> int:
         print("snv\ttype\tallele\teffect\tpval")
 
     intens = IntensityTable.from_file(args.intensities)
-    kmers = KmerIndex.from_file(args.kmerPositions)
+    kmers = KmerIndex.from_file(args.array)
     matcher = MotifMatcher(kmers.kmers)
     design = DesignBuilder(intens.values)
     engine = RegressionEngine()
