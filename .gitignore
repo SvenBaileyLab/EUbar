@@ -98,3 +98,4 @@ eubar/snv_pooled.py
 eubar/snv_indel.py
 out/
 test_figures/
+docs/
