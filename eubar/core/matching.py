@@ -19,7 +19,9 @@ from typing import DefaultDict, Dict, List, Mapping, Tuple
 from .sequence import reverse_complement
 
 
-def wildcard_pos_from_offset(offset: int, j: int, kmer_size: int, is_reverse: bool = False) -> int:
+def wildcard_pos_from_offset(
+    offset: int, j: int, kmer_size: int, is_reverse: bool = False
+) -> int:
     """Convert k-mer start offset to wildcard base position within the probe region."""
     if is_reverse:
         return int(offset) + (kmer_size - 1 - int(j))
@@ -29,7 +31,9 @@ def wildcard_pos_from_offset(offset: int, j: int, kmer_size: int, is_reverse: bo
 @dataclass(frozen=True)
 class MatchResults:
     allele_region_offsets: Mapping[int, Mapping[int, Mapping[str, Mapping[str, int]]]]
-    allele_matched_kmers: Mapping[int, Mapping[int, Mapping[str, List[Tuple[str, str, str]]]]]
+    allele_matched_kmers: Mapping[
+        int, Mapping[int, Mapping[str, List[Tuple[str, str, str]]]]
+    ]
 
 
 class MotifMatcher:
@@ -39,14 +43,16 @@ class MotifMatcher:
         self.kmer_positions = kmer_positions
 
     def scan(self, region_seq: str, k: int) -> MatchResults:
-        allele_region_offsets: DefaultDict[int, DefaultDict[int, DefaultDict[str, Dict[str, int]]]] = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(dict))
-        )
-        allele_matched_kmers: DefaultDict[int, DefaultDict[int, DefaultDict[str, List[Tuple[str, str, str]]]]] = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(list))
-        )
+        allele_region_offsets: DefaultDict[
+            int, DefaultDict[int, DefaultDict[str, Dict[str, int]]]
+        ] = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+        allele_matched_kmers: DefaultDict[
+            int, DefaultDict[int, DefaultDict[str, List[Tuple[str, str, str]]]]
+        ] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
-        seen = set()  # prevent duplicate matches per motif_pos + snv + base + region + match_kmer
+        seen = (
+            set()
+        )  # prevent duplicate matches per motif_pos + snv + base + region + match_kmer
 
         for motif_pos in range(len(region_seq) - k + 1):
             kmer = region_seq[motif_pos : motif_pos + k]
@@ -79,12 +85,17 @@ class MotifMatcher:
                                 kmer_size=k,
                                 is_reverse=is_reverse,
                             )
-                            allele_region_offsets[motif_pos][snv_index][base][region_id] = wp
+                            allele_region_offsets[motif_pos][snv_index][base][
+                                region_id
+                            ] = wp
                             allele_matched_kmers[motif_pos][snv_index][base].append(
                                 (wildcard_kmer, filled_kmer, region_id)
                             )
 
-        return MatchResults(allele_region_offsets=allele_region_offsets, allele_matched_kmers=allele_matched_kmers)
+        return MatchResults(
+            allele_region_offsets=allele_region_offsets,
+            allele_matched_kmers=allele_matched_kmers,
+        )
 
     def scan_snv(self, region_seq: str, k: int, overlapping_windows) -> MatchResults:
         """Fast SNV-only scan.
@@ -110,12 +121,12 @@ class MotifMatcher:
             windows.
         """
 
-        allele_region_offsets: DefaultDict[int, DefaultDict[int, DefaultDict[str, Dict[str, int]]]] = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(dict))
-        )
-        allele_matched_kmers: DefaultDict[int, DefaultDict[int, DefaultDict[str, List[Tuple[str, str, str]]]]] = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(list))
-        )
+        allele_region_offsets: DefaultDict[
+            int, DefaultDict[int, DefaultDict[str, Dict[str, int]]]
+        ] = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+        allele_matched_kmers: DefaultDict[
+            int, DefaultDict[int, DefaultDict[str, List[Tuple[str, str, str]]]]
+        ] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
         for motif_pos, snv_index in overlapping_windows:
             motif_pos = int(motif_pos)
@@ -161,4 +172,7 @@ class MotifMatcher:
                         dest[region_id] = wp
                         out_list.append((wildcard_kmer, filled_kmer, region_id))
 
-        return MatchResults(allele_region_offsets=allele_region_offsets, allele_matched_kmers=allele_matched_kmers)
+        return MatchResults(
+            allele_region_offsets=allele_region_offsets,
+            allele_matched_kmers=allele_matched_kmers,
+        )

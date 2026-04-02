@@ -84,7 +84,11 @@ class DesignBuilder:
                 region_to_alleles.setdefault(region, set()).add(allele)
                 region_to_pos.setdefault(region, int(pos))
 
-        regions = [r for r, a in region_to_alleles.items() if len(a) == 1 and r in self.intensities]
+        regions = [
+            r
+            for r, a in region_to_alleles.items()
+            if len(a) == 1 and r in self.intensities
+        ]
         if len(regions) < 10:
             return None
 
@@ -100,12 +104,18 @@ class DesignBuilder:
             if a in alt_alleles:
                 X.at[r, a] = 1.0
 
-        y = pd.Series([self.intensities[r] for r in regions], index=regions, dtype=float)
+        y = pd.Series(
+            [self.intensities[r] for r in regions], index=regions, dtype=float
+        )
 
         if include_covariates:
             region_to_kmer_pos = {r: region_to_pos.get(r, 0) for r in regions}
-            lp, sl = extract_covariates(regions, region_to_kmer_pos, fold_half=fold_half)
+            lp, sl = extract_covariates(
+                regions, region_to_kmer_pos, fold_half=fold_half
+            )
             X["lp"] = lp
             X["sl"] = sl
 
-        return WindowDesign(regions=regions, ref_allele=ref_allele, alt_alleles=alt_alleles, X=X, y=y)
+        return WindowDesign(
+            regions=regions, ref_allele=ref_allele, alt_alleles=alt_alleles, X=X, y=y
+        )

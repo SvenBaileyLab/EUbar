@@ -72,7 +72,6 @@ def _safe_float(x):
         return math.nan
 
 
-
 def _parse_ref_alt_from_snv(snv_str: str):
     try:
         allele_part = snv_str.split(":", 2)[2]
@@ -84,7 +83,6 @@ def _parse_ref_alt_from_snv(snv_str: str):
     except Exception:
         pass
     return None, None
-
 
 
 def _best_supported_motif_pos(rows, snv_str: str):
@@ -148,10 +146,14 @@ def _best_supported_motif_pos(rows, snv_str: str):
         alt_c = alt_rand["effect"]
         ref_c = ref_rand["effect"]
         return (
-            not math.isnan(alt_p) and not math.isnan(ref_p)
-            and not math.isnan(alt_c) and not math.isnan(ref_c)
-            and alt_p < 0.05 and ref_p < 0.05
-            and alt_c > 0.0 and ref_c > 0.0
+            not math.isnan(alt_p)
+            and not math.isnan(ref_p)
+            and not math.isnan(alt_c)
+            and not math.isnan(ref_c)
+            and alt_p < 0.05
+            and ref_p < 0.05
+            and alt_c > 0.0
+            and ref_c > 0.0
         )
 
     for _, _, motif_pos in candidates:
@@ -159,7 +161,6 @@ def _best_supported_motif_pos(rows, snv_str: str):
             return motif_pos
 
     return candidates[0][2]
-
 
 
 def _best_pval_summary_rows(rows, snv_str: str):
@@ -181,17 +182,29 @@ def _best_pval_summary_rows(rows, snv_str: str):
                         p = _safe_float(r.get("pval"))
                         c = _safe_float(r.get("coef"))
                         stat = _extract_stat(r)
-                        best = {"type": label, "allele": allele, "effect": c, "pval": p, "stat": stat}
+                        best = {
+                            "type": label,
+                            "allele": allele,
+                            "effect": c,
+                            "pval": p,
+                            "stat": stat,
+                        }
                         break
 
             if best is None:
-                best = {"type": label, "allele": allele, "effect": math.nan, "pval": math.nan, "stat": math.nan}
+                best = {
+                    "type": label,
+                    "allele": allele,
+                    "effect": math.nan,
+                    "pval": math.nan,
+                    "stat": math.nan,
+                }
             out.append(best)
     return out
 
 
 def _print_best_pval_table(snv_str, rows, *, include_rand=True):
-    """Print a snv_pooled-like table: snv, type, allele, effect, pval."""
+    """Print a compact TSV table: snv, type, allele, effect, pval."""
     summary = _best_pval_summary_rows(rows, snv_str)
     for r in summary:
         if (not include_rand) and r["type"] == "RAND":
@@ -200,7 +213,7 @@ def _print_best_pval_table(snv_str, rows, *, include_rand=True):
         pval = r["pval"]
         stat = r.get("stat", math.nan)
         pval_str = _format_pval(pval, stat=stat)
-        # Match snv_pooled style: 'nan' for missing
+        # Use 'nan' for missing values
         print(f"{snv_str}\t{r['type']}\t{r['allele']}\t{effect}\t{pval_str}")
 
 
@@ -292,23 +305,69 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Run motif regression on SNV(s)")
     group = p.add_mutually_exclusive_group(required=True)
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
-    p.add_argument("--array", "--kmerPositions", dest="array", required=True, help="Path to k-mer array file mapping k-mers to genomic regions")
-    p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
-    group.add_argument("--snv-list", help="Comma-separated list of SNVs in chr:pos:ref>alt format")
-    group.add_argument("--snv-list-file", help="Optional file with SNVs, one per line in chr:pos:ref>alt format")
-    p.add_argument("--kmer-size", "--kmer_size", dest="kmer_size", type=int, default=8, help="K-mer size (default: 8)")
-    p.add_argument("--rand-n", type=int, default=500, help="Number of random probes to use for RAND regression (default: 500)")
-    p.add_argument("--no-rand", action="store_true", help="Skip RAND regression and only output AFF (still prints the motif-effect table)")
+    p.add_argument(
+        "--array",
+        "--kmerPositions",
+        dest="array",
+        required=True,
+        help="Path to k-mer array file mapping k-mers to genomic regions",
+    )
+    p.add_argument(
+        "--genome", required=True, help="Path to reference genome in FASTA format"
+    )
+    group.add_argument(
+        "--snv-list", help="Comma-separated list of SNVs in chr:pos:ref>alt format"
+    )
+    group.add_argument(
+        "--snv-list-file",
+        help="Optional file with SNVs, one per line in chr:pos:ref>alt format",
+    )
+    p.add_argument(
+        "--kmer-size",
+        "--kmer_size",
+        dest="kmer_size",
+        type=int,
+        default=8,
+        help="K-mer size (default: 8)",
+    )
+    p.add_argument(
+        "--rand-n",
+        type=int,
+        default=500,
+        help="Number of random probes to use for RAND regression (default: 500)",
+    )
+    p.add_argument(
+        "--no-rand",
+        action="store_true",
+        help="Skip RAND regression and only output AFF (still prints the motif-effect table)",
+    )
     p.add_argument(
         "--best_pval",
         action="store_true",
-        help="Summarize results by choosing, for each (type, allele), the motif_pos with the smallest p-value and printing one effect+pval per allele in snv_pooled-like TSV format",
+        help="Summarize results by choosing one shared motif position per SNV using the ALT AFF signal and same-position RAND support, then print a compact TSV with one row per type and allele from that position",
     )
-    p.add_argument("--output_long", type=str, help="Write a scan-style long TSV (with SNV as first column) to this path")
-    p.add_argument("--mode", choices=["nb", "ols"], default="ols", help="Regression type: negative binomial ('nb') or ordinary least squares ('ols')")
-    p.add_argument("--no-covariates", action="store_true")
-    p.add_argument("--raw-lp", action="store_true", help="Use raw lp in [0,1] (no folding to [0,0.5])")
-    p.add_argument("--debug", action="store_true")
+    p.add_argument(
+        "--output_long",
+        type=str,
+        help="Write a scan-style long TSV (with SNV as first column) to this path",
+    )
+    p.add_argument(
+        "--mode",
+        choices=["nb", "ols"],
+        default="ols",
+        help="Regression type: negative binomial ('nb') or ordinary least squares ('ols')",
+    )
+    p.add_argument(
+        "--no-covariates", action="store_true", help="Disable lp and sl covariates"
+    )
+    p.add_argument(
+        "--raw-lp",
+        action="store_true",
+        help="Use raw lp in [0,1] (no folding to [0,0.5])",
+    )
+    p.add_argument(
+        "--debug", action="store_true", help="Print additional debugging information"
+    )
     args = p.parse_args(argv)
 
     if args.best_pval:
@@ -328,7 +387,9 @@ def main(argv=None) -> int:
 
     for snv_str in snvs:
         try:
-            snv = SnvWindow.from_snv(snv_str, args.genome, k=args.kmer_size, debug=args.debug)
+            snv = SnvWindow.from_snv(
+                snv_str, args.genome, k=args.kmer_size, debug=args.debug
+            )
         except Exception as e:
             print(f"[ERROR] {snv_str}: {e}", file=sys.stderr)
             continue

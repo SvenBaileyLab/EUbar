@@ -10,6 +10,7 @@ import pandas as pd
 import statsmodels.api as sm
 import warnings
 
+
 @dataclass(frozen=True)
 class FitResult:
     model: str  # 'nb' or 'ols'
@@ -106,25 +107,35 @@ class RegressionEngine:
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
                 res = m.fit()
-            return FitResult(model="nb", method=method, params=dict(res.params), pvalues=dict(res.pvalues))
-
+            return FitResult(
+                model="nb",
+                method=method,
+                params=dict(res.params),
+                pvalues=dict(res.pvalues),
+            )
 
         def _fit_ols(y_vec: np.ndarray, method: str = "ols_log1p") -> FitResult:
             m = sm.OLS(np.log1p(y_vec), Xc)
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
                 res = m.fit()
-            return FitResult(model="ols", method=method, params=dict(res.params), pvalues=dict(res.pvalues))
-
+            return FitResult(
+                model="ols",
+                method=method,
+                params=dict(res.params),
+                pvalues=dict(res.pvalues),
+            )
 
         if mode == "ols":
-            return _fit_ols(y_arr, method='ols_log1p')
+            return _fit_ols(y_arr, method="ols_log1p")
 
         last_err: Optional[Exception] = None
         for attempt in range(self.max_retries + 1):
             try:
                 y_try = y_arr
-                method = 'nb' if attempt == 0 else ('nb_w99' if attempt == 1 else 'nb_w98')
+                method = (
+                    "nb" if attempt == 0 else ("nb_w99" if attempt == 1 else "nb_w98")
+                )
                 if attempt == 1:
                     y_try = winsorize(y_try, 0.99)
                 elif attempt >= 2:
@@ -138,7 +149,7 @@ class RegressionEngine:
 
         # final fallback: OLS
         try:
-            return _fit_ols(y_arr, method='ols_log1p')
+            return _fit_ols(y_arr, method="ols_log1p")
         except Exception:
             # if even OLS fails, re-raise original error
             raise last_err if last_err is not None else RuntimeError("Model fit failed")

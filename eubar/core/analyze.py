@@ -87,61 +87,67 @@ def run_aff_window(
 
     # Always emit A/C/G/T rows like legacy, with NA/NA for the reference allele and
     # for alleles that have no matched regions.
-    for a in ['A', 'C', 'G', 'T']:
+    for a in ["A", "C", "G", "T"]:
         filled = list(local_kmer)
         filled[snv_index] = a
-        filled_kmer = ''.join(filled)
+        filled_kmer = "".join(filled)
 
         if a == ref:
-            rows.append({
-                'snv_str': snv_str,
-                'wildcard_kmer': wildcard_kmer,
-                'filled_kmer': filled_kmer,
-                'motif_pos': motif_pos,
-                'snv_index': snv_index,
-                'absolute_pos': motif_pos + snv_index,
-                'allele': a,
-                'coef': 'NA',
-                'pval': 'NA',
-                'label': 'AFF',
-                'model': fit.model,
-                'method': 'na_ref',
-                'ref': ref,
-            })
+            rows.append(
+                {
+                    "snv_str": snv_str,
+                    "wildcard_kmer": wildcard_kmer,
+                    "filled_kmer": filled_kmer,
+                    "motif_pos": motif_pos,
+                    "snv_index": snv_index,
+                    "absolute_pos": motif_pos + snv_index,
+                    "allele": a,
+                    "coef": "NA",
+                    "pval": "NA",
+                    "label": "AFF",
+                    "model": fit.model,
+                    "method": "na_ref",
+                    "ref": ref,
+                }
+            )
             continue
 
         if a in all_alleles:
-            rows.append({
-                'snv_str': snv_str,
-                'wildcard_kmer': wildcard_kmer,
-                'filled_kmer': filled_kmer,
-                'motif_pos': motif_pos,
-                'snv_index': snv_index,
-                'absolute_pos': motif_pos + snv_index,
-                'allele': a,
-                'coef': float(fit.params.get(a, math.nan)),
-                'pval': float(fit.pvalues.get(a, math.nan)),
-                'label': 'AFF',
-                'model': fit.model,
-                'method': fit.method,
-                'ref': ref,
-            })
+            rows.append(
+                {
+                    "snv_str": snv_str,
+                    "wildcard_kmer": wildcard_kmer,
+                    "filled_kmer": filled_kmer,
+                    "motif_pos": motif_pos,
+                    "snv_index": snv_index,
+                    "absolute_pos": motif_pos + snv_index,
+                    "allele": a,
+                    "coef": float(fit.params.get(a, math.nan)),
+                    "pval": float(fit.pvalues.get(a, math.nan)),
+                    "label": "AFF",
+                    "model": fit.model,
+                    "method": fit.method,
+                    "ref": ref,
+                }
+            )
         else:
-            rows.append({
-                'snv_str': snv_str,
-                'wildcard_kmer': wildcard_kmer,
-                'filled_kmer': filled_kmer,
-                'motif_pos': motif_pos,
-                'snv_index': snv_index,
-                'absolute_pos': motif_pos + snv_index,
-                'allele': a,
-                'coef': 'NA',
-                'pval': 'NA',
-                'label': 'AFF',
-                'model': fit.model,
-                'method': 'na_missing',
-                'ref': ref,
-            })
+            rows.append(
+                {
+                    "snv_str": snv_str,
+                    "wildcard_kmer": wildcard_kmer,
+                    "filled_kmer": filled_kmer,
+                    "motif_pos": motif_pos,
+                    "snv_index": snv_index,
+                    "absolute_pos": motif_pos + snv_index,
+                    "allele": a,
+                    "coef": "NA",
+                    "pval": "NA",
+                    "label": "AFF",
+                    "model": fit.model,
+                    "method": "na_missing",
+                    "ref": ref,
+                }
+            )
 
     return rows
 
@@ -202,18 +208,22 @@ def analyze_snv(
     aff_rows: List[Dict[str, Any]] = []
 
     # For RAND we want: aff_regions_per_allele[motif_pos][allele] = {region: wildcard_pos}
-    aff_regions_per_allele: Dict[int, Dict[str, Dict[str, int]]] = {j: {} for j in range(k)}
+    aff_regions_per_allele: Dict[int, Dict[str, Dict[str, int]]] = {
+        j: {} for j in range(k)
+    }
     matched_regions_all: set[str] = set()
 
     for motif_pos, snv_index_in_kmer in snv.iter_overlapping_windows():
-        region_lookup = (
-            matches.allele_region_offsets.get(motif_pos, {}).get(snv_index_in_kmer, {})
+        region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
+            snv_index_in_kmer, {}
         )
         if not region_lookup:
             continue
 
         # stash for RAND
-        aff_regions_per_allele[motif_pos] = {a: dict(m) for a, m in region_lookup.items()}
+        aff_regions_per_allele[motif_pos] = {
+            a: dict(m) for a, m in region_lookup.items()
+        }
         for a, m in region_lookup.items():
             matched_regions_all.update(m.keys())
 

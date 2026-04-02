@@ -221,7 +221,9 @@ def build_aff_payloads_for_snv(
         matches = matcher.scan(snv.seq, k)
     out: Dict[Tuple[int, int], RegressionPayload] = {}
     for motif_pos, snv_index_in_kmer in snv.iter_overlapping_windows():
-        region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(snv_index_in_kmer, {})
+        region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
+            snv_index_in_kmer, {}
+        )
         payload = build_aff_payload(
             region_seq=snv.seq,
             motif_pos=motif_pos,
@@ -290,18 +292,26 @@ def build_rand_payloads_for_snv(
         matches = matcher.scan(snv.seq, k)
 
     # Reconstruct the exact inputs to RAND used in analyze_snv.
-    aff_regions_per_allele: Dict[int, Dict[str, Dict[str, int]]] = {j: {} for j in range(k)}
+    aff_regions_per_allele: Dict[int, Dict[str, Dict[str, int]]] = {
+        j: {} for j in range(k)
+    }
     matched_regions_all: set[str] = set()
     for motif_pos, snv_index_in_kmer in snv.iter_overlapping_windows():
-        region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(snv_index_in_kmer, {})
+        region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
+            snv_index_in_kmer, {}
+        )
         if not region_lookup:
             continue
-        aff_regions_per_allele[motif_pos] = {a: dict(m) for a, m in region_lookup.items()}
+        aff_regions_per_allele[motif_pos] = {
+            a: dict(m) for a, m in region_lookup.items()
+        }
         for m in region_lookup.values():
             matched_regions_all.update(m.keys())
 
     sampler = RandSampler(matcher.kmer_positions)
-    sample = sampler.sample(matched_regions=matched_regions_all, snv_str=snv_str, k=k, rand_n=rand_n)
+    sample = sampler.sample(
+        matched_regions=matched_regions_all, snv_str=snv_str, k=k, rand_n=rand_n
+    )
 
     payloads: Dict[int, RegressionPayload] = {}
     alleles = ["A", "C", "G", "T"]
@@ -316,8 +326,14 @@ def build_rand_payloads_for_snv(
 
         ambiguous = {r for r, c in union_counts.items() if c > 1}
         if ambiguous:
-            hit_sets = {a: {r: off for r, off in (hit_sets.get(a) or {}).items() if r not in ambiguous}
-                        for a in alleles}
+            hit_sets = {
+                a: {
+                    r: off
+                    for r, off in (hit_sets.get(a) or {}).items()
+                    if r not in ambiguous
+                }
+                for a in alleles
+            }
         bg_map = sample.by_pos.get(j, {}) or {}
 
         hit_regions = set()
@@ -361,7 +377,9 @@ def build_rand_payloads_for_snv(
                 # In current codepath, background offsets are always taken as forward.
                 from .matching import wildcard_pos_from_offset
 
-                wildcard_pos = wildcard_pos_from_offset(offset=int(offset), j=j, kmer_size=k, is_reverse=False)
+                wildcard_pos = wildcard_pos_from_offset(
+                    offset=int(offset), j=j, kmer_size=k, is_reverse=False
+                )
 
             lp_val = (float(wildcard_pos) / float(length)) if length > 0 else 0.5
             if fold_half:
@@ -369,18 +387,23 @@ def build_rand_payloads_for_snv(
 
                 lp_val = fold_lp_half(lp_val)
 
-            row = {a: (1.0 if region in (hit_sets.get(a, {}) or {}) else 0.0) for a in alleles}
+            row = {
+                a: (1.0 if region in (hit_sets.get(a, {}) or {}) else 0.0)
+                for a in alleles
+            }
             row["lp"] = float(lp_val)
             row["sl"] = int(length)
             rows.append(row)
             y.append(float(np.round(val)))
-            row_meta.append({
-                "region": region,
-                "group": "HIT" if hit_allele is not None else "BG",
-                "allele": hit_allele,
-                "wildcard_pos": int(wildcard_pos),
-                "length": int(length),
-            })
+            row_meta.append(
+                {
+                    "region": region,
+                    "group": "HIT" if hit_allele is not None else "BG",
+                    "allele": hit_allele,
+                    "wildcard_pos": int(wildcard_pos),
+                    "length": int(length),
+                }
+            )
 
         if len(y) < min_n:
             continue
@@ -396,8 +419,12 @@ def build_rand_payloads_for_snv(
             "n_total": int(len(y_s)),
             "n_bg": int(sum(1 for m in row_meta if m["group"] == "BG")),
             "n_hit": int(sum(1 for m in row_meta if m["group"] == "HIT")),
-            "allele_counts": {a: int(float(X[a].sum())) if a in X.columns else 0 for a in alleles},
-            "row_meta": pd.DataFrame(row_meta).set_index("region") if row_meta else pd.DataFrame(),
+            "allele_counts": {
+                a: int(float(X[a].sum())) if a in X.columns else 0 for a in alleles
+            },
+            "row_meta": pd.DataFrame(row_meta).set_index("region")
+            if row_meta
+            else pd.DataFrame(),
         }
 
         payloads[j] = RegressionPayload(

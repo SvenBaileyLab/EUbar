@@ -24,7 +24,9 @@ def parse_snv(s: str) -> Tuple[str, int, str, str]:
     return chrom, int(pos_s), ref.upper(), alt.upper()
 
 
-def fetch_sequence(genome_fasta: str, chrom: str, start_1based: int, end_1based_inclusive: int) -> str:
+def fetch_sequence(
+    genome_fasta: str, chrom: str, start_1based: int, end_1based_inclusive: int
+) -> str:
     """Fetch sequence from FASTA, 1-based inclusive coordinates."""
     if Fasta is None:
         raise ImportError(
@@ -39,7 +41,7 @@ def fetch_sequence(genome_fasta: str, chrom: str, start_1based: int, end_1based_
 class RegionWindow:
     chrom: str
     start: int  # 1-based inclusive
-    end: int    # 1-based inclusive
+    end: int  # 1-based inclusive
     seq: str
     reverse: bool = False
 
@@ -82,10 +84,10 @@ class SnvWindow:
     alt: str
     k: int
     start: int  # 1-based inclusive
-    end: int    # 1-based inclusive
+    end: int  # 1-based inclusive
     seq: str
     snv_index: int  # 0-based index within seq
-    flipped: bool   # whether we reverse-complemented
+    flipped: bool  # whether we reverse-complemented
 
     @classmethod
     def from_snv(
@@ -120,6 +122,7 @@ class SnvWindow:
 
         if debug:
             import sys
+
             sys.stderr.write(
                 f"[SNVWIN] {snv} start={start} end={end} snv_index={snv_index} flipped={flipped} seq={seq}\n"
             )

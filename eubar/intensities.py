@@ -226,41 +226,54 @@ def run_bedtools_map_pybedtools(
 
 _rc = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
+
 def _parse_region_key(region: str):
     """Parse 'chr:start-end' -> (chr, start, end)."""
     chrom, rest = region.split(":", 1)
     start_s, end_s = rest.split("-", 1)
     return chrom, int(start_s), int(end_s)
 
+
 def _make_fasta_fetcher(genome_fa: str):
     """Return fetch(chrom, start, end) -> uppercase sequence."""
     try:
         import pysam  # type: ignore
+
         fa = pysam.FastaFile(genome_fa)
+
         def fetch(chrom: str, start: int, end: int) -> str:
             return fa.fetch(chrom, start, end).upper()
+
         return fetch
     except Exception:
         try:
             from pyfaidx import Fasta  # type: ignore
+
             fa = Fasta(genome_fa, as_raw=True, sequence_always_upper=True)
+
             def fetch(chrom: str, start: int, end: int) -> str:
                 return str(fa[chrom][start:end]).upper()
+
             return fetch
         except Exception as e:
             raise RuntimeError(
-                "Could not open genome FASTA. Install pysam or pyfaidx, and check path. " 
+                "Could not open genome FASTA. Install pysam or pyfaidx, and check path. "
                 f"Error: {e}"
             )
+
 
 def _gc_fraction(seq: str) -> float:
     seq = seq.upper()
     # count only A/C/G/T (ignore N)
-    a = seq.count("A"); c = seq.count("C"); g = seq.count("G"); t = seq.count("T")
+    a = seq.count("A")
+    c = seq.count("C")
+    g = seq.count("G")
+    t = seq.count("T")
     denom = a + c + g + t
     if denom == 0:
         return 0.0
     return float(c + g) / float(denom)
+
 
 def _load_openness_from_bed(path: str):
     """
@@ -309,7 +322,8 @@ def _load_openness_from_bed(path: str):
                 continue
             chrom = a[0]
             try:
-                start = int(a[1]); end = int(a[2])
+                start = int(a[1])
+                end = int(a[2])
             except ValueError:
                 continue
             region = f"{chrom}:{start}-{end}"
@@ -357,6 +371,7 @@ def _load_openness_from_bed(path: str):
 
     return open_map, used, missing
 
+
 def _read_two_col_map(path: str):
     """Read 'key value' lines into dict."""
     out = {}
@@ -375,6 +390,7 @@ def _read_two_col_map(path: str):
                 continue
             out[key] = val
     return out
+
 
 def residualize_intensities(
     int_map: dict,
@@ -420,7 +436,9 @@ def residualize_intensities(
 
     output_mode = str(output_mode).lower()
     if output_mode not in {"resid_log", "log_corrected", "intensity_like"}:
-        raise ValueError("output_mode must be one of {'resid_log','log_corrected','intensity_like'}")
+        raise ValueError(
+            "output_mode must be one of {'resid_log','log_corrected','intensity_like'}"
+        )
 
     resid_open = str(resid_open).lower()
     if resid_open not in {"auto", "off", "force"}:
@@ -460,13 +478,17 @@ def residualize_intensities(
         open_map, open_col0, open_missing = _load_openness_from_bed(bed_path)
         if not open_map:
             if resid_open == "force":
-                raise ValueError("Openness requested (force) but no numeric openness column was detected in --bed.")
+                raise ValueError(
+                    "Openness requested (force) but no numeric openness column was detected in --bed."
+                )
         else:
             tmp = np.array([open_map.get(r, np.nan) for r in regions], dtype=float)
             miss = int(np.isnan(tmp).sum())
             if miss > 0:
                 if resid_open == "force":
-                    raise ValueError(f"Openness requested (force) but missing for {miss}/{n} regions.")
+                    raise ValueError(
+                        f"Openness requested (force) but missing for {miss}/{n} regions."
+                    )
                 # auto: ignore openness
             else:
                 use_open = True
@@ -506,7 +528,9 @@ def residualize_intensities(
         if use_open:
             print(f"[Info] openness covariate: ON (column='{open_col}', coverage=100%)")
         else:
-            print("[Info] openness covariate: not used (incomplete coverage or no usable column)")
+            print(
+                "[Info] openness covariate: not used (incomplete coverage or no usable column)"
+            )
 
     # Build residual map
     out_map = {r: float(resid[i]) for i, r in enumerate(regions)}
@@ -516,7 +540,7 @@ def residualize_intensities(
         # Re-center residuals to an "intensity-like" log scale by adding the fitted value at mean covariates.
         # This keeps the covariate-corrected values comparable in scale to log1p(signal).
         cov_means = []
-        cov_means.append(1.0)               # intercept
+        cov_means.append(1.0)  # intercept
         cov_means.append(float(np.mean(gc)))
         if use_length:
             cov_means.append(float(np.mean(length)))
@@ -543,10 +567,18 @@ def main(argv=None) -> int:
             "Outputs: region_key<TAB>signal, where region_key is chrom:start-end of the ORIGINAL regions."
         )
     )
-    parser.add_argument("--bed", required=True, help="Path to DNase-seq/ATAC-seq BED file (-a)")
-    parser.add_argument("--signal", required=True, help="Path to ChIP-seq BedGraph OR BigWig file (-b)")
+    parser.add_argument(
+        "--bed", required=True, help="Path to DNase-seq/ATAC-seq BED file (-a)"
+    )
+    parser.add_argument(
+        "--signal", required=True, help="Path to ChIP-seq BedGraph OR BigWig file (-b)"
+    )
     parser.add_argument("--output", required=True, help="Output file path")
-    parser.add_argument("--genome_size_file", default=None, help="Optional genome chrom sizes file for bedtools sort (-g)")
+    parser.add_argument(
+        "--genome_size_file",
+        default=None,
+        help="Optional genome chrom sizes file for bedtools sort (-g)",
+    )
     parser.add_argument("--keep_temp", action="store_true", help="Keep temporary files")
 
     parser.add_argument(
@@ -575,22 +607,22 @@ def main(argv=None) -> int:
         default="off",
         choices=("auto", "off", "force"),
         help="Include openness covariate from --bed during residualization: auto/off/force. "
-             "Forced to 'off' unless --resid-use-length is set.",
+        "Forced to 'off' unless --resid-use-length is set.",
     )
     parser.add_argument(
         "--resid-output",
         default="intensity_like",
         choices=("resid_log", "log_corrected", "intensity_like"),
         help="Residualization output scale: "
-             "resid_log (raw residuals in log space), "
-             "log_corrected (recentered log scale), "
-             "intensity_like (nonnegative intensity scale).",
+        "resid_log (raw residuals in log space), "
+        "log_corrected (recentered log scale), "
+        "intensity_like (nonnegative intensity scale).",
     )
 
     # NEW:
     parser.add_argument(
         "--summary",
-        default="max",  
+        default="max",
         choices=SUMMARY_CHOICES,
         help="How to summarize signal: max/mean over full interval, or center_max/center_mean over a fixed window.",
     )
@@ -602,7 +634,6 @@ def main(argv=None) -> int:
     )
 
     args = parser.parse_args(argv)
-
 
     if args.residualize and not args.genome_fasta:
         parser.error("--genome-fasta is required when --residualize is set.")
@@ -638,7 +669,9 @@ def main(argv=None) -> int:
 
     if args.residualize:
         if not args.genome_fasta:
-            raise SystemExit("[Error] --genome-fasta is required when --residualize is set.")
+            raise SystemExit(
+                "[Error] --genome-fasta is required when --residualize is set."
+            )
 
         sig_map = _read_two_col_map(tmp_out)
 
@@ -646,7 +679,9 @@ def main(argv=None) -> int:
         resid_open = args.resid_open
         if not args.resid_use_length:
             if resid_open != "off":
-                print("[Info] --resid-open ignored because --resid-use-length is off (forcing resid_open='off').")
+                print(
+                    "[Info] --resid-open ignored because --resid-use-length is off (forcing resid_open='off')."
+                )
             resid_open = "off"
 
         resid_map, _, _ = residualize_intensities(
@@ -674,7 +709,6 @@ def main(argv=None) -> int:
                 pass
 
     return 0
-
 
 
 if __name__ == "__main__":

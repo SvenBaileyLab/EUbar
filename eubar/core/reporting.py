@@ -14,10 +14,11 @@ def _normalize_row_len(row, n):
     """Pad or trim a row to exactly n elements."""
     r = list(row)
     if len(r) < n:
-        r = r + ['NA'] * (n - len(r))
+        r = r + ["NA"] * (n - len(r))
     elif len(r) > n:
         r = r[:n]
     return r
+
 
 def print_motif_effect_table(
     snv_str: str,
@@ -173,7 +174,7 @@ def _plot_aff_motif_effects(rows, save_path):
     df["absolute_position"] = df["window_index"] + df["snp_index"] + 1
     region_length = df["absolute_position"].max()
 
-    allele_colors = {"A": "black", "C": "red", "G": "green", "T": "blue"}
+    allele_colors = {"A": "#008000", "C": "#0000ff", "G": "#ffa600", "T": "#ff0000"}
 
     fig_width = max(12, region_length * 0.15)
     fig, axs = plt.subplots(2, 1, figsize=(fig_width, 6), sharex=True)
@@ -216,6 +217,7 @@ def _plot_aff_motif_effects(rows, save_path):
     plt.close()
     print(f"[Info] Figure saved to: {save_path}")
 
+
 def plot_aff_motif_effects(rows, save_path):
     import matplotlib
     import numpy as np
@@ -254,10 +256,12 @@ def plot_aff_motif_effects(rows, save_path):
     df["-log10(pval)"] = -np.log10(df["pval_clamped"])
     # ----------------------------------------
 
-    df["absolute_position"] = df["window_index"].astype(int) + df["snp_index"].astype(int) + 1
+    df["absolute_position"] = (
+        df["window_index"].astype(int) + df["snp_index"].astype(int) + 1
+    )
     region_length = int(df["absolute_position"].max()) if len(df) else 1
 
-    allele_colors = {"A": "black", "C": "red", "G": "green", "T": "blue"}
+    allele_colors = {"A": "#008000", "C": "#0000ff", "G": "#ffa600", "T": "#ff0000"}
 
     fig_width = max(12, region_length * 0.15)
     fig, axs = plt.subplots(2, 1, figsize=(fig_width, 6), sharex=True)

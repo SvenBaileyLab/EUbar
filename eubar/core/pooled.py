@@ -109,7 +109,16 @@ def build_pooled_table(
         # Drop any allele dummy columns if present; pooled AFF uses categorical label.
         drop_cols = [
             c
-            for c in ["A", "C", "G", "T", "allele_A", "allele_C", "allele_G", "allele_T"]
+            for c in [
+                "A",
+                "C",
+                "G",
+                "T",
+                "allele_A",
+                "allele_C",
+                "allele_G",
+                "allele_T",
+            ]
             if c in df.columns
         ]
         if drop_cols:
@@ -154,7 +163,12 @@ def build_pooled_table_rand(
                 df[c] = 0.0
 
         # Standardize dummy column names (also avoids shadowing any future formula use).
-        rename_map = {"A": "allele_A", "C": "allele_C", "G": "allele_G", "T": "allele_T"}
+        rename_map = {
+            "A": "allele_A",
+            "C": "allele_C",
+            "G": "allele_G",
+            "T": "allele_T",
+        }
         df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
         snv_index = mp_to_si.get(int(motif_pos), -1)
@@ -171,7 +185,7 @@ def build_pooled_table_rand(
 
 
 # ---------------------------------------------------------------------------
-# Design matrix builders 
+# Design matrix builders
 # ---------------------------------------------------------------------------
 
 
@@ -326,7 +340,9 @@ def _named_params_pvals(res):
     if hasattr(params, "to_dict") and getattr(params, "index", None) is not None:
         p_dict = params.to_dict()
     else:
-        p_arr = np.asarray(params, dtype=float) if params is not None else np.asarray([])
+        p_arr = (
+            np.asarray(params, dtype=float) if params is not None else np.asarray([])
+        )
         p_dict = {n: float(v) for n, v in zip(names, p_arr)} if names else {}
 
     if hasattr(pvals, "to_dict") and getattr(pvals, "index", None) is not None:

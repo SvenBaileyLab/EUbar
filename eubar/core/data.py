@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Mapping, Optional, Iterable, Tuple
 
+
 def read_intensities(path: str) -> Dict[str, float]:
     """Read "region value" lines into a dict."""
     out: Dict[str, float] = {}
@@ -94,6 +95,7 @@ class IntensityTable:
 @dataclass(frozen=True)
 class KmerIndex:
     """Simple dictionary-backed index: kmer -> {region: offset}."""
+
     kmers: Mapping[str, Mapping[str, int]]
 
     # cache for wildcard patterns (safe even with frozen=True because dict is mutable)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import warnings
+
 warnings.filterwarnings(
     "ignore",
     message=r".*A NumPy version >=.* and <.* is required for this version of SciPy.*",
@@ -10,14 +11,15 @@ warnings.filterwarnings(
 
 import sys
 import importlib
-import subprocess
-from typing import Callable, Optional
 
 
 # command -> (module_name, description)
 COMMANDS: dict[str, tuple[str, str]] = {
-    "array": ("array", "Build k-mer → region index from BED + genome"),
-    "intensities": ("intensities", "Compute per-region intensities from signal track(s)"),
+    "array": ("array", "Build k-mer to region index from BED + genome"),
+    "intensities": (
+        "intensities",
+        "Compute per-region intensities from signal track(s)",
+    ),
     "scan": ("scan", "Scan a genomic region for motif effects via regression"),
     "snv": ("snv", "Run SNV-anchored motif regression across a list of variants"),
     "motifs": ("motifs", "Seed-and-wobble motif discovery with extension"),
@@ -61,8 +63,6 @@ def _print_help() -> None:
     sys.stderr.write("\n".join(lines) + "\n")
 
 
-
-
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd in {"-v", "--version"}:
         from eubar import __version__
+
         sys.stdout.write(f"eubar {__version__}\n")
         return 0
 

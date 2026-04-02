@@ -36,14 +36,14 @@ def extract_kmers_array(seq, kmer_size):
     result = []
 
     for i in range(max_i):
-        kmer = seq[i:i + kmer_size]
+        kmer = seq[i : i + kmer_size]
         if is_valid_kmer(kmer):
             result.append((kmer, i))
 
     return result
 
 
-def extract_kmers_from_sequence(seq, region_str, kmer_size):
+def extract_kmers_from_sequence(seq, kmer_size):
     """
     Wrapper around Numba-accelerated version. Returns dict of {kmer: [offsets]}.
     """
@@ -69,20 +69,30 @@ def verify_kmers(all_kmers_dict, kmer_size):
     if missing_count == 0:
         print(f"All kmers represented! N={len(actual_kmers)}")
     else:
-        print(f"WARNING - {len(actual_kmers)} kmers found. {missing_count} missing (showing first {min(missing_count, max_print)}).")
+        print(
+            f"WARNING - {len(actual_kmers)} kmers found. {missing_count} missing (showing first {min(missing_count, max_print)})."
+        )
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Generate k-mer index from ATAC/DNase-seq BED and genome FASTA (Numba accelerated)."
+        description="Build a k-mer array file from a BED file and reference genome FASTA."
     )
-    parser.add_argument("--bed", required=True, help="Input BED file")
-    parser.add_argument("--genome", required=True, help="Reference genome in FASTA format")
-    parser.add_argument("--kmer_size", "--kmer-size", dest="kmer_size",
-                        type=int, default=8, help="Length of k-mers to extract")
-    parser.add_argument("--output", "--out", dest="output",
-                        required=True, help="Output file for the k-mer index")
-
+    parser.add_argument(
+        "--bed", required=True, help="Input BED file of genomic regions"
+    )
+    parser.add_argument("--genome", required=True, help="Reference genome FASTA")
+    parser.add_argument(
+        "--kmer_size",
+        "--kmer-size",
+        dest="kmer_size",
+        type=int,
+        default=8,
+        help="k-mer size (default: 8)",
+    )
+    parser.add_argument(
+        "--output", "--out", dest="output", required=True, help="Output array file"
+    )
 
     args = parser.parse_args(argv)
 
@@ -92,7 +102,7 @@ def main(argv=None) -> int:
     seen_regions = set()
     total_regions = 0
     skipped_duplicates = 0
-    skipped_invalid = 0  
+    skipped_invalid = 0
 
     for chrom, start, end in parse_bed(args.bed):
         total_regions += 1
@@ -109,7 +119,7 @@ def main(argv=None) -> int:
             print(f"[Warning] Chromosome {chrom} not found in genome. Skipping.")
             continue
 
-        found_kmers = extract_kmers_from_sequence(seq, region_str, args.kmer_size)
+        found_kmers = extract_kmers_from_sequence(seq, args.kmer_size)
 
         for kmer, offsets in found_kmers.items():
             if not is_valid_kmer(kmer):
@@ -126,9 +136,10 @@ def main(argv=None) -> int:
 
     print(f"[Done] K-mer index written to {args.output}")
     print(f"[Done] Skipped {skipped_invalid} k-mers with N or ambiguous bases")
-    print(f"[Summary] Processed {len(seen_regions)} unique regions (skipped {skipped_duplicates} duplicates from {total_regions} lines)")
+    print(
+        f"[Summary] Processed {len(seen_regions)} unique regions (skipped {skipped_duplicates} duplicates from {total_regions} lines)"
+    )
     verify_kmers(all_kmers, args.kmer_size)
-
 
     return 0
 

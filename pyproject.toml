@@ -4,12 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eubar"
-version = "0.1.0"
+version = "1.0.0"
 description = "EUBAR toolkit"
 readme = "README.md"
 requires-python = ">=3.8"
-authors = [{name="EUBAR contributors"}]
-license = {text = "GNU General Public License v3.0"}
+authors = [{ name = "Eftyhios (Aki) Kirbizakis, Swneke Bailey" }]
+license = { text = "GNU General Public License v3.0" }
+dependencies = [
+  "matplotlib>=3.6",
+  "numpy>=1.22",
+  "pandas>=1.5",
+  "pybedtools>=0.9",
+  "pyfaidx>=0.8",
+  "statsmodels>=0.14",
+  "pyBigWig>=0.3.18",
+  "numba>=0.56"
+]
 
 [project.scripts]
 eubar = "eubar.cli:main"
@@ -17,5 +27,5 @@ eubar = "eubar.cli:main"
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
-[tool.setuptools]
-packages = ["eubar"]
+[tool.setuptools.packages.find]
+include = ["eubar*"]

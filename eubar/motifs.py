@@ -25,7 +25,7 @@ except Exception:
 
 BASES = ("A", "C", "G", "T")
 STANDARD_DNA_COLORS = {"A": "#008000", "C": "#0000ff", "G": "#ffa600", "T": "#ff0000"}
-PRETTY_DNA_COLORS   = {"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728"}
+PRETTY_DNA_COLORS = {"A": "#2ca02c", "C": "#1f77b4", "G": "#ff7f0e", "T": "#d62728"}
 
 
 def _dna_colors(pretty_logo: bool) -> dict:
@@ -75,7 +75,9 @@ def fg_indices_for_pattern(
         # pattern may match either the stored kmer *or* its reverse complement.
         # If we only test the stored string, revcomp-enabled runs can miss
         # legitimate matches and fail to extend motifs.
-        if kmer_matches_pattern(kmer, pattern) or kmer_matches_pattern(reverse_complement(kmer), pattern):
+        if kmer_matches_pattern(kmer, pattern) or kmer_matches_pattern(
+            reverse_complement(kmer), pattern
+        ):
             idx_list.append(idx)
 
     if not idx_list:
@@ -88,7 +90,6 @@ def fg_indices_for_pattern(
     if cache is not None:
         cache[pattern] = out
     return out
-
 
 
 def read_intensities(path: str) -> Dict[str, float]:
@@ -174,11 +175,11 @@ def read_unique_kmer_positions(path: str) -> Dict[str, Dict[str, int]]:
 
 @dataclass
 class ProbeRanks:
-    regions: List[str]              # index -> region
-    scores: np.ndarray              # index -> intensity
-    order: np.ndarray               # indices sorted by score desc
-    region_to_i: Dict[str, int]     # region -> index
-    i_to_rank: np.ndarray           # index -> rank where 0 is best/highest intensity
+    regions: List[str]  # index -> region
+    scores: np.ndarray  # index -> intensity
+    order: np.ndarray  # indices sorted by score desc
+    region_to_i: Dict[str, int]  # region -> index
+    i_to_rank: np.ndarray  # index -> rank where 0 is best/highest intensity
 
 
 def build_probe_ranks(intensities: Dict[str, float]) -> ProbeRanks:
@@ -270,8 +271,8 @@ def reduced_escore_and_p(
         return float("nan"), float("nan")
 
     # Higher score = better intensity
-    scores_fg = (-(i_to_rank[fg_idx]).astype(float))
-    scores_bg = (-(i_to_rank[bg_idx]).astype(float))
+    scores_fg = -(i_to_rank[fg_idx]).astype(float)
+    scores_bg = -(i_to_rank[bg_idx]).astype(float)
 
     scores = np.concatenate([scores_fg, scores_bg])
     labels = np.concatenate([np.ones(F, dtype=int), np.zeros(B, dtype=int)])
@@ -364,7 +365,7 @@ def ppm_from_seed_wobble(
 
     ppm_rows: List[pd.Series] = []
 
-    use_patterns = ("." in seed)
+    use_patterns = "." in seed
     pattern_cache: Dict[str, np.ndarray] = {}
 
     for pos in range(k):
@@ -379,7 +380,9 @@ def ppm_from_seed_wobble(
                     idx = np.array([], dtype=int)
             variants[b] = idx
 
-        counts_df, clean_sets = reduced_test_four_variants(variants, min_per_base=min_per_base)
+        counts_df, clean_sets = reduced_test_four_variants(
+            variants, min_per_base=min_per_base
+        )
 
         # Allow wobble even if one base is rare/absent (e.g. F=0 for T at pos=7).
         good_bases = [b for b in BASES if int(len(clean_sets[b])) >= min_per_base]
@@ -444,7 +447,9 @@ def ppm_from_seed_wobble(
                 )
                 continue
 
-            bg_parts = [clean_sets[x] for x in BASES if x != b and int(len(clean_sets[x])) > 0]
+            bg_parts = [
+                clean_sets[x] for x in BASES if x != b and int(len(clean_sets[x])) > 0
+            ]
             bg = np.concatenate(bg_parts) if bg_parts else np.array([], dtype=int)
 
             E_red, p = reduced_escore_and_p(fg, bg, i_to_rank)
@@ -622,7 +627,9 @@ def extend_side_greedy(
         else:
             raise ValueError("side must be 'left' or 'right'")
 
-        counts_df, clean_sets = reduced_test_four_variants(variants, min_per_base=min_per_base)
+        counts_df, clean_sets = reduced_test_four_variants(
+            variants, min_per_base=min_per_base
+        )
         if (counts_df["F"] < min_per_base).any():
             break
 
@@ -700,13 +707,14 @@ def extend_side(
     reduced_rows: List[Dict] = []
     pattern_cache: Dict[str, np.ndarray] = {}
 
-
     for step in range(max_steps):
         if side == "right":
             anchor = list(window[1:])
             anchor_probs = window_probs[1:]
             anchor_len = len(anchor)
-            order = sorted(range(anchor_len), key=lambda i: _info_content(anchor_probs[i]))
+            order = sorted(
+                range(anchor_len), key=lambda i: _info_content(anchor_probs[i])
+            )
 
             def make_pattern(new_base: str, gaps: int) -> str:
                 a = anchor.copy()
@@ -718,7 +726,9 @@ def extend_side(
             anchor = list(window[:-1])
             anchor_probs = window_probs[:-1]
             anchor_len = len(anchor)
-            order = sorted(range(anchor_len), key=lambda i: _info_content(anchor_probs[i]))
+            order = sorted(
+                range(anchor_len), key=lambda i: _info_content(anchor_probs[i])
+            )
 
             def make_pattern(new_base: str, gaps: int) -> str:
                 a = anchor.copy()
@@ -733,9 +743,13 @@ def extend_side(
             variants: Dict[str, np.ndarray] = {}
             for b in BASES:
                 pat = make_pattern(b, gaps)
-                variants[b] = fg_indices_for_pattern(pat, kmer_to_idx, cache=pattern_cache)
+                variants[b] = fg_indices_for_pattern(
+                    pat, kmer_to_idx, cache=pattern_cache
+                )
 
-            counts_df, tmp_sets = reduced_test_four_variants(variants, min_per_base=min_per_base)
+            counts_df, tmp_sets = reduced_test_four_variants(
+                variants, min_per_base=min_per_base
+            )
             if not (counts_df["F"] < min_per_base).any():
                 chosen_gaps = gaps
                 clean_sets = tmp_sets
@@ -861,7 +875,6 @@ def write_meme(ppm: pd.DataFrame, out_path: str, motif_name: str) -> None:
             f.write(f"{row['A']:.6f} {row['C']:.6f} {row['G']:.6f} {row['T']:.6f}\n")
 
 
-
 def ppm_to_bits_matrix(ppm: pd.DataFrame, eps: float = 1e-12) -> pd.DataFrame:
     """Convert a PPM (probabilities) to a per-letter height matrix in *bits*.
 
@@ -881,9 +894,9 @@ def ppm_to_bits_matrix(ppm: pd.DataFrame, eps: float = 1e-12) -> pd.DataFrame:
     mat = mat.div(row_sums, axis=0)
 
     p = np.clip(mat.to_numpy(dtype=float), eps, 1.0)
-    H = -(p * np.log2(p)).sum(axis=1)          # entropy in bits
-    IC = np.log2(4.0) - H                      # max 2 bits for DNA
-    heights = p * IC[:, None]                  # per-letter heights
+    H = -(p * np.log2(p)).sum(axis=1)  # entropy in bits
+    IC = np.log2(4.0) - H  # max 2 bits for DNA
+    heights = p * IC[:, None]  # per-letter heights
 
     out = pd.DataFrame(heights, columns=list(BASES), index=ppm.index)
     out.index.name = ppm.index.name
@@ -965,8 +978,15 @@ def plot_logo(
         ax.set_ylabel(y_label, fontsize=18, fontfamily="Carlito")
         ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
         ax.set_xticks(np.arange(L))
-        ax.set_xticklabels([str(i) for i in range(1, L + 1)], rotation=90, fontsize=18, fontfamily="Carlito")
-        ax.set_yticklabels([f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito")
+        ax.set_xticklabels(
+            [str(i) for i in range(1, L + 1)],
+            rotation=90,
+            fontsize=18,
+            fontfamily="Carlito",
+        )
+        ax.set_yticklabels(
+            [f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito"
+        )
         ax.set_ylim(0, y_max)
     else:
         # fallback: draw a simple sequence logo using stacked letters
@@ -985,7 +1005,12 @@ def plot_logo(
             sx = 0.9 / max(bb.width, 1e-6)
             sy = height / max(bb.height, 1e-6)
             trans = Affine2D().scale(sx, sy).translate(x + 0.05, y)
-            patch = PathPatch(tp, lw=0, facecolor=dna_colors.get(letter, "black"), transform=trans + ax.transData)
+            patch = PathPatch(
+                tp,
+                lw=0,
+                facecolor=dna_colors.get(letter, "black"),
+                transform=trans + ax.transData,
+            )
             ax.add_patch(patch)
 
         L = logo_mat.shape[0]
@@ -999,10 +1024,17 @@ def plot_logo(
         ax.set_xlim(0, L)
         ax.set_ylim(0, y_max)
         ax.set_xticks(np.arange(L))
-        ax.set_xticklabels([str(i) for i in range(1, L + 1)], rotation=90, fontsize=18, fontfamily="Carlito")
+        ax.set_xticklabels(
+            [str(i) for i in range(1, L + 1)],
+            rotation=90,
+            fontsize=18,
+            fontfamily="Carlito",
+        )
         ax.set_ylabel(y_label, fontsize=18, fontfamily="Carlito")
         ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
-        ax.set_yticklabels([f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito")
+        ax.set_yticklabels(
+            [f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito"
+        )
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
 
@@ -1028,7 +1060,11 @@ def plot_enrichment_bars(
 
     # Expect columns: pos, base, E_reduced
     df = reduced_full_df.copy()
-    if "pos" not in df.columns or "base" not in df.columns or "E_reduced" not in df.columns:
+    if (
+        "pos" not in df.columns
+        or "base" not in df.columns
+        or "E_reduced" not in df.columns
+    ):
         return
 
     # Keep only valid bases
@@ -1037,10 +1073,7 @@ def plot_enrichment_bars(
         return
 
     # Aggregate across steps/sides if present (take mean per pos/base)
-    df_agg = (
-        df.groupby(["pos", "base"], as_index=False)["E_reduced"]
-          .mean()
-    )
+    df_agg = df.groupby(["pos", "base"], as_index=False)["E_reduced"].mean()
 
     # Build pivot: rows=pos (original), cols=base
     pivot = df_agg.pivot(index="pos", columns="base", values="E_reduced").sort_index()
@@ -1048,7 +1081,11 @@ def plot_enrichment_bars(
     # Map original positions to 0..L-1 for display to match logo
     orig_positions = list(pivot.index)
     pos_map = {p: i for i, p in enumerate(orig_positions)}
-    pivot = pivot.reset_index().assign(pos0=lambda d: d["pos"].map(pos_map)).set_index("pos0")
+    pivot = (
+        pivot.reset_index()
+        .assign(pos0=lambda d: d["pos"].map(pos_map))
+        .set_index("pos0")
+    )
     pivot.index.name = "pos"
 
     L = pivot.shape[0]
@@ -1076,15 +1113,26 @@ def plot_enrichment_bars(
 
     x = np.arange(L, dtype=float)
     width = 0.18
-    offsets = {"A": -1.5*width, "C": -0.5*width, "G": 0.5*width, "T": 1.5*width}
+    offsets = {"A": -1.5 * width, "C": -0.5 * width, "G": 0.5 * width, "T": 1.5 * width}
 
     for b in BASES:
-        ax.bar(x + offsets[b], pivot[b].to_numpy(dtype=float), width=width, label=b, color=dna_colors.get(b))
+        ax.bar(
+            x + offsets[b],
+            pivot[b].to_numpy(dtype=float),
+            width=width,
+            label=b,
+            color=dna_colors.get(b),
+        )
 
     ax.axhline(0.0, linewidth=1.0)
     ax.set_xlim(-0.6, L - 0.4)
     ax.set_xticks(x)
-    ax.set_xticklabels([str(i) for i in range(1, L + 1)], rotation=90, fontsize=18, fontfamily="Carlito")
+    ax.set_xticklabels(
+        [str(i) for i in range(1, L + 1)],
+        rotation=90,
+        fontsize=18,
+        fontfamily="Carlito",
+    )
     ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
     ax.set_ylabel("Enrichment score")
 
@@ -1099,6 +1147,7 @@ def plot_enrichment_bars(
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
+
 
 def plot_seed_enrichment_curve(
     seed: str,
@@ -1238,11 +1287,15 @@ def plot_motif_vs_escore(
         return
 
     qc["bin"] = pd.qcut(qc["motif_logscore"], q=q, duplicates="drop")
-    trend = qc.groupby("bin").agg(
-        mean_motif=("motif_logscore", "mean"),
-        mean_E=("E", "mean"),
-        n=("E", "size"),
-    ).reset_index(drop=True)
+    trend = (
+        qc.groupby("bin")
+        .agg(
+            mean_motif=("motif_logscore", "mean"),
+            mean_E=("E", "mean"),
+            n=("E", "size"),
+        )
+        .reset_index(drop=True)
+    )
 
     fig, ax = plt.subplots(figsize=(6.5, 4.5))
     ax.plot(trend["mean_motif"], trend["mean_E"], marker="o")
@@ -1258,8 +1311,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="Seed-and-wobble motif discovery from probe intensities + kmer occurrence index."
     )
-    ap.add_argument("--intensities", required=True, help="Probe intensity file")
-    ap.add_argument("--array", "--kmers", dest="array", required=True, help="Path to k-mer array file mapping k-mers to genomic regions")
+    ap.add_argument("--intensities", required=True, help="Path to probe intensity file")
+    ap.add_argument(
+        "--array",
+        "--kmers",
+        dest="array",
+        required=True,
+        help="Path to k-mer array file mapping k-mers to genomic regions",
+    )
     ap.add_argument("--kmer-size", type=int, default=8, help="k-mer size (default: 8)")
     ap.add_argument(
         "--no-combine-revcomp",
@@ -1346,7 +1405,6 @@ def main(argv=None) -> int:
         help="Output prefix (default: affinity_motif)",
     )
 
-
     ap.add_argument(
         "--pretty-logo",
         action="store_true",
@@ -1387,7 +1445,9 @@ def main(argv=None) -> int:
     kmer_positions = read_unique_kmer_positions(args.array)
 
     # basic k-mer length sanity
-    kmer_positions = {k: v for k, v in kmer_positions.items() if len(k) == args.kmer_size}
+    kmer_positions = {
+        k: v for k, v in kmer_positions.items() if len(k) == args.kmer_size
+    }
 
     kmer_to_idx = build_kmer_to_probe_idx(
         kmer_positions=kmer_positions,
@@ -1396,7 +1456,9 @@ def main(argv=None) -> int:
     )
 
     if args.seed is None:
-        es_df = choose_seed(kmer_to_idx, ranks.i_to_rank, min_F=args.min_F, max_gaps=args.max_gaps)
+        es_df = choose_seed(
+            kmer_to_idx, ranks.i_to_rank, min_F=args.min_F, max_gaps=args.max_gaps
+        )
         if es_df.empty:
             sys.stderr.write("[error] No kmers passed min-F filter.\n")
             return 2
@@ -1407,7 +1469,9 @@ def main(argv=None) -> int:
         sys.stderr.write(f"[ok] Wrote top E-score table: {top_path}\n")
     else:
         seed = args.seed.strip().upper()
-        es_df = choose_seed(kmer_to_idx, ranks.i_to_rank, min_F=args.min_F, max_gaps=args.max_gaps)
+        es_df = choose_seed(
+            kmer_to_idx, ranks.i_to_rank, min_F=args.min_F, max_gaps=args.max_gaps
+        )
 
     sys.stderr.write(f"[seed] {seed}\n")
 
@@ -1488,12 +1552,16 @@ def main(argv=None) -> int:
     logo_bits_rc_path = os.path.join(args.outdir, f"{args.prefix}.logo_bits_rc.png")
     # Back-compat: keep the old name as the probability logo
     logo_path = logo_prob_path
-    seed_curve_path = os.path.join(args.outdir, f"{args.prefix}.seed_enrichment_curve.png")
+    seed_curve_path = os.path.join(
+        args.outdir, f"{args.prefix}.seed_enrichment_curve.png"
+    )
     seed_roc_path = os.path.join(args.outdir, f"{args.prefix}.seed_roc.png")
     seed_hist_path = os.path.join(args.outdir, f"{args.prefix}.seed_escore_hist.png")
     qc_path = os.path.join(args.outdir, f"{args.prefix}.motif_vs_E.png")
     enrich_bar_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment.png")
-    enrich_bar_rc_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment_rc.png")
+    enrich_bar_rc_path = os.path.join(
+        args.outdir, f"{args.prefix}.reduced_enrichment_rc.png"
+    )
 
     reduced_path = os.path.join(args.outdir, f"{args.prefix}.reduced.tsv")
 
@@ -1515,7 +1583,9 @@ def main(argv=None) -> int:
     if not right_df.empty:
         right_df["pos"] = core_len + right_df["step"].astype(int)
 
-    reduced_full_df = pd.concat([left_df, core_df, right_df], ignore_index=True, sort=False)
+    reduced_full_df = pd.concat(
+        [left_df, core_df, right_df], ignore_index=True, sort=False
+    )
     # stable ordering
     if not reduced_full_df.empty:
         reduced_full_df["pos"] = reduced_full_df["pos"].astype(int)
@@ -1528,20 +1598,53 @@ def main(argv=None) -> int:
     ppm_normal = ppm.reset_index(drop=True)
     ppm_rc = reverse_complement_ppm(ppm_normal)
     write_meme(ppm_normal, meme_path, motif_name=consensus)
-    plot_logo(ppm_normal, logo_prob_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="prob")
-    plot_logo(ppm_normal, logo_bits_path, title=f"{consensus} (seed={seed})", pretty_logo=bool(args.pretty_logo), mode="bits")
-    plot_logo(ppm_rc, logo_prob_rc_path, title=f"{consensus} (seed={seed}) [RC]", pretty_logo=bool(args.pretty_logo), mode="prob")
-    plot_logo(ppm_rc, logo_bits_rc_path, title=f"{consensus} (seed={seed}) [RC]", pretty_logo=bool(args.pretty_logo), mode="bits")
-    plot_enrichment_bars(reduced_full_df, enrich_bar_path, title=None, pretty_logo=bool(args.pretty_logo))
+    plot_logo(
+        ppm_normal,
+        logo_prob_path,
+        title=f"{consensus} (seed={seed})",
+        pretty_logo=bool(args.pretty_logo),
+        mode="prob",
+    )
+    plot_logo(
+        ppm_normal,
+        logo_bits_path,
+        title=f"{consensus} (seed={seed})",
+        pretty_logo=bool(args.pretty_logo),
+        mode="bits",
+    )
+    plot_logo(
+        ppm_rc,
+        logo_prob_rc_path,
+        title=f"{consensus} (seed={seed}) [RC]",
+        pretty_logo=bool(args.pretty_logo),
+        mode="prob",
+    )
+    plot_logo(
+        ppm_rc,
+        logo_bits_rc_path,
+        title=f"{consensus} (seed={seed}) [RC]",
+        pretty_logo=bool(args.pretty_logo),
+        mode="bits",
+    )
+    plot_enrichment_bars(
+        reduced_full_df, enrich_bar_path, title=None, pretty_logo=bool(args.pretty_logo)
+    )
     reduced_full_df_rc = reverse_complement_reduced_df(reduced_full_df)
-    plot_enrichment_bars(reduced_full_df_rc, enrich_bar_rc_path, title=None, pretty_logo=bool(args.pretty_logo))
+    plot_enrichment_bars(
+        reduced_full_df_rc,
+        enrich_bar_rc_path,
+        title=None,
+        pretty_logo=bool(args.pretty_logo),
+    )
 
     # Seed enrichment plots + histogram of candidate E-scores
     fg_seed = fg_indices_for_pattern(seed, kmer_to_idx)
     if fg_seed.size > 0:
         plot_seed_enrichment_curve(seed, fg_seed, ranks, seed_curve_path)
         plot_seed_enrichment_roc(seed, fg_seed, ranks, seed_roc_path)
-    plot_escore_histogram(es_df, seed_hist_path, title="Seed candidate E-score distribution")
+    plot_escore_histogram(
+        es_df, seed_hist_path, title="Seed candidate E-score distribution"
+    )
 
     # QC plot (only if motif length == kmer_size)
     try:

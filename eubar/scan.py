@@ -14,10 +14,12 @@ from eubar.core.regression import RegressionEngine
 from eubar.core.analyze import analyze_region_scan
 from eubar.core.reporting import print_rows_as_tsv, plot_aff_motif_effects
 
-# Pooled scan uses the same pooled helpers as snv_pooled, but groups windows by
-# absolute position in the scanned region (absolute_pos = motif_pos + snv_index).
 from eubar.core.inspect import build_aff_payloads_for_region_scan
-from eubar.core.pooled import build_pooled_table, fit_pooled_model, effect_table_from_result
+from eubar.core.pooled import (
+    build_pooled_table,
+    fit_pooled_model,
+    effect_table_from_result,
+)
 
 
 def _to_legacy_rows(dict_rows: list[dict]) -> list[list]:
@@ -122,9 +124,8 @@ def _pooled_scan_legacy_rows(
     position (motif_pos + snv_index) and fits:
 
       log1p(y) ~ allele + window + (optional covariates)
-
-    using the same implementation as snv_pooled.
     """
+
     payloads = build_aff_payloads_for_region_scan(
         region,
         matcher=matcher,
@@ -148,7 +149,9 @@ def _pooled_scan_legacy_rows(
         rep = group[rep_key]
 
         # All windows in this group should share the same ref allele (the base at abs_pos).
-        ref = getattr(rep, "ref_allele", None) or (region.seq[abs_pos] if 0 <= abs_pos < len(region.seq) else None)
+        ref = getattr(rep, "ref_allele", None) or (
+            region.seq[abs_pos] if 0 <= abs_pos < len(region.seq) else None
+        )
         if ref not in {"A", "C", "G", "T"}:
             # Skip weird bases (N) in the reference sequence.
             continue
@@ -180,7 +183,7 @@ def _pooled_scan_legacy_rows(
                     wildcard_kmer,
                     filled_kmer,
                     int(abs_pos),  # window_index (repurposed to absolute position)
-                    0,             # snp_index (fixed)
+                    0,  # snp_index (fixed)
                     "AFF",
                     r.get("allele", ""),
                     _nan(r.get("effect")),
@@ -196,29 +199,64 @@ def _pooled_scan_legacy_rows(
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Refactored scan-mode motif regression")
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
-    p.add_argument("--array", "--kmerPositions", dest="array", required=True, help="Path to k-mer array file mapping k-mers to genomic regions")
-    p.add_argument("--genome", required=True, help="FASTA genome file")
+    p.add_argument(
+        "--array",
+        "--kmerPositions",
+        dest="array",
+        required=True,
+        help="Path to k-mer array file mapping k-mers to genomic regions",
+    )
+    p.add_argument("--genome", required=True, help="Reference genome FASTA")
     p.add_argument("--region", required=True, help="chr:start-end (1-based inclusive)")
-    p.add_argument("--kmer-size", "--kmer_size", dest="kmer_size", type=int, default=8, help="K-mer size (default: 8)")
+    p.add_argument(
+        "--kmer-size",
+        "--kmer_size",
+        dest="kmer_size",
+        type=int,
+        default=8,
+        help="K-mer size (default: 8)",
+    )
 
-    # Default matches snv_pooled: OLS on log1p(y).
-    p.add_argument("--mode", choices=["ols", "nb"], default="ols", help="Regression mode (ols or nb)")
+    p.add_argument(
+        "--mode",
+        choices=["ols", "nb"],
+        default="ols",
+        help="Regression mode (ols or nb)",
+    )
 
     grp = p.add_mutually_exclusive_group()
-    grp.add_argument("--pooled", action="store_true",
-                     help="Pool overlapping windows per absolute position (snv_pooled-style)")
-    grp.add_argument("--best_pval", action="store_true",
-                     help="Summarize non-pooled scan by choosing, for each (position,allele), the overlapping window with the smallest p-value")
-    p.add_argument("--no-covariates", action="store_true", help="Disable lp and sl covariates")
-    p.add_argument("--reverse", action="store_true", help="Use reverse complement of the sequence")
-    p.add_argument("--raw-lp", action="store_true", help="Use raw lp in [0,1] (no folding to [0,0.5])")
-    p.add_argument("--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)")
+    grp.add_argument(
+        "--pooled",
+        action="store_true",
+        help="Pool overlapping windows per absolute position and fit one pooled model per position",
+    )
+    grp.add_argument(
+        "--best_pval",
+        action="store_true",
+        help="Summarize non-pooled scan by choosing, for each (position,allele), the overlapping window with the smallest p-value",
+    )
+    p.add_argument(
+        "--no-covariates", action="store_true", help="Disable lp and sl covariates"
+    )
+    p.add_argument(
+        "--reverse", action="store_true", help="Use reverse complement of the sequence"
+    )
+    p.add_argument(
+        "--raw-lp",
+        action="store_true",
+        help="Use raw lp in [0,1] (no folding to [0,0.5])",
+    )
+    p.add_argument(
+        "--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)"
+    )
     args = p.parse_args(argv)
 
     intens = IntensityTable.from_file(args.intensities)
     kmers = KmerIndex.from_file(args.array)
 
-    region = RegionWindow.from_region_string(args.region, args.genome, reverse=args.reverse)
+    region = RegionWindow.from_region_string(
+        args.region, args.genome, reverse=args.reverse
+    )
     matcher = MotifMatcher(kmers.kmers)
     design = DesignBuilder(intens.values)
     engine = RegressionEngine()

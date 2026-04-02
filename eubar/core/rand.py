@@ -91,7 +91,12 @@ class RandSampler:
 
 
 class RandRegressor:
-    def __init__(self, intensities: Mapping[str, float], *, engine: Optional[RegressionEngine] = None):
+    def __init__(
+        self,
+        intensities: Mapping[str, float],
+        *,
+        engine: Optional[RegressionEngine] = None,
+    ):
         self.intensities = intensities
         self.engine = engine or RegressionEngine()
 
@@ -149,13 +154,18 @@ class RandRegressor:
                     offset = bg_map.get(region, None)
                     if offset is None:
                         continue
-                    wildcard_pos = wildcard_pos_from_offset(offset=int(offset), j=j, kmer_size=k, is_reverse=False)
+                    wildcard_pos = wildcard_pos_from_offset(
+                        offset=int(offset), j=j, kmer_size=k, is_reverse=False
+                    )
 
                 lp_val = (wildcard_pos / length) if length > 0 else 0.5
                 if fold_half:
                     lp_val = fold_lp_half(lp_val)
 
-                row = {a: (1.0 if region in (hit_sets.get(a, {}) or {}) else 0.0) for a in alleles}
+                row = {
+                    a: (1.0 if region in (hit_sets.get(a, {}) or {}) else 0.0)
+                    for a in alleles
+                }
                 row["lp"] = float(lp_val)
                 row["sl"] = int(length)
                 rows.append(row)
@@ -176,7 +186,9 @@ class RandRegressor:
                         "motif_pos": j,
                         "allele": a,
                         "coef": float(fit.params.get(a, 0.0)),
-                        "pval": float(fit.pvalues.get(a, np.nan)) if a in fit.pvalues else float("nan"),
+                        "pval": float(fit.pvalues.get(a, np.nan))
+                        if a in fit.pvalues
+                        else float("nan"),
                         "label": "RAND",
                         "model": fit.model,
                         "method": fit.method,
