@@ -94,3 +94,7 @@ SEM/*
 test_params/*
 eubar.zip
 figures/*
+eubar/pooled.py
+eubar/indel.py
+out/
+test_figures/
