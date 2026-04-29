@@ -81,6 +81,8 @@ Main output:
 
 - tab-delimited file with one region and one intensity value per line
 
+> **Important:** EUbar expects intensities in log-space residual format (`resid_log`), which is the default output mode. Do not use `--resid-output intensity_like` — this will produce incorrect regression results.
+
 ### 3A) Run SNV analysis
 
 Use `snv` to evaluate one or more variants in `chr:pos:ref>alt` format.
@@ -106,9 +108,9 @@ eubar snv \
 Useful options:
 
 - `--mode nb` to use negative binomial regression instead of OLS
-- `--best_pval` to report best-position summaries
+- `--best-pval` to report best-position summaries
 - `--no-rand` to skip RAND regression
-- `--output_long` to write a long-format TSV
+- `--output-long` to write a long-format TSV
 
 ### 3B) Run region scan analysis
 
@@ -125,7 +127,7 @@ eubar scan \
 Useful options:
 
 - `--mode nb` to use negative binomial regression
-- `--best_pval` for best-position summaries
+- `--best-pval` for best-position summaries
 - `--pooled` for pooled output mode
 - `--save-figure scan_plot.png` to save a figure
 

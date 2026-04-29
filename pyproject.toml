@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "eubar"
 version = "1.0.0"
-description = "EUBAR toolkit"
+description = "Regression-based toolkit for modeling sequence effects on transcription factor binding using accessible chromatin as probes"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [{ name = "Eftyhios (Aki) Kirbizakis, Swneke Bailey" }]
@@ -18,11 +18,15 @@ dependencies = [
   "pyfaidx>=0.8",
   "statsmodels>=0.14",
   "pyBigWig>=0.3.18",
-  "numba>=0.56"
+  "numba>=0.56",
+  "scipy>=1.9"
 ]
 
 [project.scripts]
 eubar = "eubar.cli:main"
+
+[project.urls]
+Repository = "https://github.com/5Aki1/EUbar"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

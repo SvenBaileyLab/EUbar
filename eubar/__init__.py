@@ -6,4 +6,4 @@ Run from CLI:
 Commands include: array, intensities, scan, snv, motifs.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
