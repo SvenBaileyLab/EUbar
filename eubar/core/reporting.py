@@ -27,45 +27,43 @@ def print_motif_effect_table(
     region_seq: str,
     results: Sequence[Dict[str, Any]],
 ) -> None:
-    ref_allele = snv_str.split(":")[2].split(">")[0]
-    motif_positions = sorted(set(r["motif_pos"] for r in results))
-
-    print(f"{snv_str}\t{chrom}\t{pos}\t{region_seq}")
+    """Print one row per (type, allele, motif_pos) for ref and alt alleles only."""
+    try:
+        allele_part = snv_str.split(":", 2)[2]
+        ref_allele = allele_part.split(">")[0].strip().upper()
+        alt_allele = allele_part.split(">")[1].strip().upper()
+    except Exception:
+        ref_allele = alt_allele = None
 
     for group in ["AFF", "RAND"]:
-        for allele in ["A", "C", "G", "T"]:
-            coefs = []
-            pvals = []
+        for allele in [a for a in [ref_allele, alt_allele] if a in ("A", "C", "G", "T")]:
+            if group == "AFF" and allele == ref_allele:
+                continue
+            for r in sorted(results, key=lambda x: x.get("motif_pos", 0)):
+                if r.get("label", "AFF") != group:
+                    continue
+                if r.get("allele") != allele:
+                    continue
 
-            for i in motif_positions:
-                match = next(
-                    (
-                        r
-                        for r in results
-                        if r["motif_pos"] == i
-                        and r["allele"] == allele
-                        and r.get("label", "AFF") == group
-                    ),
-                    None,
-                )
+                motif_pos = r.get("motif_pos", "NA")
+                wildcard_kmer = r.get("wildcard_kmer", "NA")
+                coef = r.get("coef", "NA")
+                pval = r.get("pval", "NA")
 
-                if group == "AFF" and allele == ref_allele:
-                    coefs.append(0)
-                    pvals.append("NA")
-                elif match:
-                    coefs.append(match["coef"])
-                    pvals.append(match["pval"])
+                if isinstance(coef, float) and not math.isfinite(coef):
+                    coef = "NA"
+                if isinstance(pval, float):
+                    if not math.isfinite(pval):
+                        pval_str = "NA"
+                    elif pval <= 0:
+                        pval_str = "<1e-300"
+                    else:
+                        pval_str = f"{pval:.3e}"
                 else:
-                    coefs.append(0)
-                    pvals.append("NA")
+                    pval_str = str(pval)
 
-            pos_str = ",".join(map(str, motif_positions))
-            coef_str = ",".join(f"{x:.7g}" for x in coefs)
-            pval_str = ",".join(
-                f"{x:.7g}" if isinstance(x, float) else x for x in pvals
-            )
-
-            print(f"{group}\t{snv_str}\t{allele}\t{pos_str}\t{coef_str}\t{pval_str}")
+                coef_str = f"{coef:.7g}" if isinstance(coef, float) else str(coef)
+                print(f"{snv_str}\t{group}\t{allele}\t{motif_pos}\t{wildcard_kmer}\t{coef_str}\t{pval_str}")
 
 
 def print_rows_as_scan_tsv_with_snv(

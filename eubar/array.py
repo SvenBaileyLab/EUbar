@@ -1,3 +1,4 @@
+from __future__ import annotations
 import argparse
 from pyfaidx import Fasta
 from collections import defaultdict

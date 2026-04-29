@@ -20,7 +20,7 @@ class FitResult:
 
 
 def _as_numeric(y: pd.Series) -> np.ndarray:
-    arr = np.asarray(y, dtype=float)
+    arr = np.array(y, dtype=float)
     arr[~np.isfinite(arr)] = np.nan
     return arr
 
@@ -62,7 +62,7 @@ class RegressionEngine:
 
         mode:
           - 'nb' (NegativeBinomial GLM)
-          - 'ols' (OLS on log1p(y))
+          - 'ols' (OLS on y directly — expects log-space residuals from eubar intensities)
 
         If NB fails with the common weights/estimation error, we retry with
         winsorized y and tiny jitter; if it still fails, we fall back to OLS.
@@ -72,7 +72,7 @@ class RegressionEngine:
 
         # basic sanitation
         y_arr = _as_numeric(y)
-        if np.nanmin(y_arr) < 0:
+        if mode == "nb" and np.nanmin(y_arr) < 0:
             # NB expects counts-like nonnegative response; clip negatives.
             y_arr = np.clip(y_arr, 0, None)
 
@@ -86,7 +86,7 @@ class RegressionEngine:
                 if np.nanstd(v.values) == 0:
                     continue
                 keep_cols.append(c)
-            X_work = X_work[keep_cols]
+            X_work = X_work[keep_cols].copy()
 
         # Scale continuous covariates to improve numeric conditioning.
         if self.scale_covariates:
@@ -114,8 +114,8 @@ class RegressionEngine:
                 pvalues=dict(res.pvalues),
             )
 
-        def _fit_ols(y_vec: np.ndarray, method: str = "ols_log1p") -> FitResult:
-            m = sm.OLS(np.log1p(y_vec), Xc)
+        def _fit_ols(y_vec: np.ndarray, method: str = "ols") -> FitResult:
+            m = sm.OLS(y_vec, Xc)
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning)
                 res = m.fit()
@@ -127,7 +127,7 @@ class RegressionEngine:
             )
 
         if mode == "ols":
-            return _fit_ols(y_arr, method="ols_log1p")
+            return _fit_ols(y_arr, method="ols")
 
         last_err: Optional[Exception] = None
         for attempt in range(self.max_retries + 1):
@@ -149,7 +149,7 @@ class RegressionEngine:
 
         # final fallback: OLS
         try:
-            return _fit_ols(y_arr, method="ols_log1p")
+            return _fit_ols(y_arr, method="ols")
         except Exception:
             # if even OLS fails, re-raise original error
             raise last_err if last_err is not None else RuntimeError("Model fit failed")

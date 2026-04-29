@@ -210,6 +210,7 @@ def build_aff_payloads_for_snv(
     include_covariates: bool = True,
     fold_half: bool = True,
     cache_matches: bool = True,
+    max_probes: Optional[int] = None,
 ) -> Dict[Tuple[int, int], RegressionPayload]:
     """Return {(motif_pos, snv_index): payload} for all windows overlapping the SNV."""
     # Fast path: in SNV mode we only need the single wildcard position that
@@ -224,6 +225,17 @@ def build_aff_payloads_for_snv(
         region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
             snv_index_in_kmer, {}
         )
+        if max_probes is not None:
+            total = sum(len(v) for v in region_lookup.values())
+            if total > max_probes:
+                rng = np.random.default_rng(abs(hash(str(sorted(region_lookup.keys())))) % 2**32)
+                new_lookup = {}
+                for a, regions in region_lookup.items():
+                    n_keep = max(1, round(max_probes * len(regions) / total))
+                    items = list(regions.items())
+                    sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
+                    new_lookup[a] = dict(items[i] for i in sampled)
+                region_lookup = new_lookup
         payload = build_aff_payload(
             region_seq=snv.seq,
             motif_pos=motif_pos,
@@ -279,19 +291,18 @@ def build_rand_payloads_for_snv(
     rand_n: int = 500,
     fold_half: bool = True,
     min_n: int = 10,
+    max_probes: Optional[int] = None,
 ) -> Dict[int, RegressionPayload]:
     """Build RAND regression inputs for each motif position (0..k-1).
 
     This mirrors the data path used by analyze_snv() (sampling excluded regions from AFF).
     It returns payloads *without fitting*.
     """
-    # Same SNV-only scan optimization as AFF.
     if hasattr(matcher, "scan_snv"):
         matches = matcher.scan_snv(snv.seq, k, snv.iter_overlapping_windows())
     else:
         matches = matcher.scan(snv.seq, k)
 
-    # Reconstruct the exact inputs to RAND used in analyze_snv.
     aff_regions_per_allele: Dict[int, Dict[str, Dict[str, int]]] = {
         j: {} for j in range(k)
     }
@@ -318,6 +329,20 @@ def build_rand_payloads_for_snv(
 
     for j in range(k):
         hit_sets = aff_regions_per_allele.get(j, {}) or {}
+
+        # Subsample hit probes proportionally across alleles if max_probes set
+        if max_probes is not None:
+            total_hits = sum(len(v) for v in hit_sets.values())
+            if total_hits > max_probes:
+                rng = np.random.default_rng(abs(hash(str(sorted(region_lookup.keys())))) % 2**32)
+                new_hit_sets = {}
+                for a, regions in hit_sets.items():
+                    n_keep = max(1, round(max_probes * len(regions) / total_hits))
+                    items = list(regions.items())
+                    sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
+                    new_hit_sets[a] = dict(items[i] for i in sampled)
+                hit_sets = new_hit_sets
+
         union_counts = {}
         for a in alleles:
             amap = hit_sets.get(a) or {}
@@ -440,3 +465,73 @@ def build_rand_payloads_for_snv(
         )
 
     return payloads
+
+
+def probe_diagnostics(payload: Optional[RegressionPayload], allele: str) -> Dict[str, Any]:
+    """Compute diagnostic metrics for one payload + allele combination.
+
+    Works for both AFF and RAND payloads. Returns a dict with three keys:
+
+    n_probes   -- total rows in the model for this window.
+
+    n_allele   -- number of probes for this specific allele.
+                  For AFF: probes whose sequence matched this allele at the
+                  wildcard position (the allele dummy == 1 rows).
+                  For RAND: hit probes for this allele specifically
+                  (from meta['allele_counts']).
+
+    outlier_infl -- (max(y_allele) - median(y_other)) / (IQR(y_other) + 1e-6).
+                    Measures how far the single highest probe in the allele
+                    group sits above the other group's distribution. Large
+                    values suggest one outlier probe is driving the effect
+                    rather than a consistent shift across the group.
+                    For AFF, 'other' is all non-allele rows.
+                    For RAND, 'other' is the background (BG) probes only.
+
+    Any metric that cannot be computed (e.g. empty groups, missing metadata)
+    is returned as the string 'NA'.
+    """
+    if payload is None:
+        return {"n_probes": "NA", "n_allele": "NA", "outlier_infl": "NA"}
+
+    X = payload.X
+    y = payload.y.values
+    n_probes = len(y)
+
+    if payload.kind == "RAND":
+        # For RAND, use allele_counts from meta for n_allele and row_meta for
+        # the BG mask — this gives a cleaner "hit allele vs background" comparison
+        # than treating all other allele dummies as the reference group.
+        n_allele = int((payload.meta.get("allele_counts") or {}).get(allele, 0))
+
+        row_meta = payload.meta.get("row_meta")
+        if row_meta is None or row_meta.empty or n_allele == 0:
+            return {"n_probes": n_probes, "n_allele": n_allele, "outlier_infl": "NA"}
+
+        allele_mask = (X[allele].values == 1.0) if allele in X.columns \
+                      else np.zeros(n_probes, dtype=bool)
+        bg_mask = (row_meta.reindex(X.index)["group"] == "BG").values
+
+    else:
+        # AFF: allele dummy == 1 is the allele group; all-dummies-zero is the ref group.
+        allele_cols = [c for c in X.columns if c in ("A", "C", "G", "T")]
+        allele_mask = (X[allele].values == 1.0) if allele in X.columns \
+                      else np.zeros(n_probes, dtype=bool)
+        bg_mask = (X[allele_cols].sum(axis=1) == 0).values if allele_cols \
+                  else ~allele_mask
+        n_allele = int(allele_mask.sum())
+
+    n_other = int(bg_mask.sum())
+    if n_allele == 0 or n_other == 0:
+        return {"n_probes": n_probes, "n_allele": n_allele, "outlier_infl": "NA"}
+
+    y_allele = y[allele_mask]
+    y_other  = y[bg_mask]
+
+    iqr_other    = float(np.percentile(y_other, 75) - np.percentile(y_other, 25))
+    outlier_infl = round(
+        (float(np.max(y_allele)) - float(np.median(y_other))) / (iqr_other + 1e-6),
+        3,
+    )
+
+    return {"n_probes": n_probes, "n_allele": n_allele, "outlier_infl": outlier_infl}

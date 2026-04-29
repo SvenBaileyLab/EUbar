@@ -1,3 +1,4 @@
+from __future__ import annotations
 import argparse
 from pybedtools import BedTool
 import os
@@ -575,21 +576,33 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--output", required=True, help="Output file path")
     parser.add_argument(
-        "--genome_size_file",
+        "--genome-size-file", dest="genome_size_file",
         default=None,
         help="Optional genome chrom sizes file for bedtools sort (-g)",
     )
-    parser.add_argument("--keep_temp", action="store_true", help="Keep temporary files")
+    parser.add_argument("--keep-temp", action="store_true", dest="keep_temp", help="Keep temporary files")
 
+    # parser.add_argument(
+    #     "--residualize",
+    #     action="store_true",
+    #     help=(
+    #         "If set, fit a simple background model and output residualized intensities. "
+    #         "Model: log1p(signal) ~ 1 + GC + length (+ optional log1p(open) if available). "
+    #         "Requires --genome-fasta. Coefficients are printed to stdout."
+    #     ),
+    # )
+    
     parser.add_argument(
-        "--residualize",
+        "--no-residualize",
         action="store_true",
         help=(
-            "If set, fit a simple background model and output residualized intensities. "
+            "Residualize: fit a simple background model and output residualized intensities. "
             "Model: log1p(signal) ~ 1 + GC + length (+ optional log1p(open) if available). "
-            "Requires --genome-fasta. Coefficients are printed to stdout."
+            "Requires --genome-fasta. Coefficients are printed to stdout. " 
+            "Skip residualization and output raw extracted signal instead."
         ),
     )
+    
     parser.add_argument(
         "--genome-fasta",
         default=None,
@@ -611,7 +624,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--resid-output",
-        default="intensity_like",
+        default="resid_log",
         choices=("resid_log", "log_corrected", "intensity_like"),
         help="Residualization output scale: "
         "resid_log (raw residuals in log space), "
@@ -619,7 +632,6 @@ def main(argv=None) -> int:
         "intensity_like (nonnegative intensity scale).",
     )
 
-    # NEW:
     parser.add_argument(
         "--summary",
         default="max",
@@ -635,14 +647,14 @@ def main(argv=None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.residualize and not args.genome_fasta:
-        parser.error("--genome-fasta is required when --residualize is set.")
+    if not args.no_residualize and not args.genome_fasta:
+        parser.error("--genome-fasta is required (use --no-residualize to skip residualization).")
 
     # If residualizing, write raw extracted signal to a temp file first,
     # then overwrite --output with residualized values.
     tmp_out = args.output
     tmp_created = False
-    if args.residualize:
+    if not args.no_residualize:
         tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".signal.txt").name
         tmp_created = True
 
@@ -667,12 +679,7 @@ def main(argv=None) -> int:
             keep_temp=args.keep_temp,
         )
 
-    if args.residualize:
-        if not args.genome_fasta:
-            raise SystemExit(
-                "[Error] --genome-fasta is required when --residualize is set."
-            )
-
+    if not args.no_residualize:
         sig_map = _read_two_col_map(tmp_out)
 
         # Enforce: openness only when length is included

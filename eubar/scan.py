@@ -206,7 +206,7 @@ def main(argv=None) -> int:
         required=True,
         help="Path to k-mer array file mapping k-mers to genomic regions",
     )
-    p.add_argument("--genome", required=True, help="Reference genome FASTA")
+    p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
     p.add_argument("--region", required=True, help="chr:start-end (1-based inclusive)")
     p.add_argument(
         "--kmer-size",
@@ -231,7 +231,7 @@ def main(argv=None) -> int:
         help="Pool overlapping windows per absolute position and fit one pooled model per position",
     )
     grp.add_argument(
-        "--best_pval",
+        "--best-pval", dest="best_pval",
         action="store_true",
         help="Summarize non-pooled scan by choosing, for each (position,allele), the overlapping window with the smallest p-value",
     )
@@ -245,6 +245,10 @@ def main(argv=None) -> int:
         "--raw-lp",
         action="store_true",
         help="Use raw lp in [0,1] (no folding to [0,0.5])",
+    )
+    p.add_argument(
+        "--max-probes", type=int, default=None, dest="max_probes",
+        help="Subsample to at most this many probes per window before fitting."
     )
     p.add_argument(
         "--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)"
@@ -281,6 +285,7 @@ def main(argv=None) -> int:
             mode=args.mode,
             include_covariates=(not args.no_covariates),
             fold_half=(not args.raw_lp),
+            max_probes=args.max_probes,
         )
         legacy_rows = _to_legacy_rows(rows)
         if args.best_pval:

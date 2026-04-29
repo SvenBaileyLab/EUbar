@@ -2,6 +2,8 @@
 
 EUbar is a command-line toolkit for modeling sequence effects on transcription factor binding using accessible genomic regions as probes and region-level signal as intensity. It provides utilities to build k-mer occurrence indices, summarize signal over regions, run regression-based scans or SNV analyses, and perform seed-and-wobble motif discovery.
 
+![EUbar method summary](docs/eubar_summary.png)
+
 The package exposes a single umbrella command:
 
 ```bash

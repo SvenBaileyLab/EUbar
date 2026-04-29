@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
-
+import numpy as np
 import math
 
 from .design import DesignBuilder
@@ -57,8 +57,22 @@ def run_aff_window(
     include_covariates: bool = True,
     fold_half: bool = True,
     k: int = 8,
+    max_probes: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Fit AFF for one (motif_pos, snv_index) window and return Perl-table rows."""
+
+    # Subsample probes proportionally across alleles if max_probes is set
+    if max_probes is not None:
+        total = sum(len(v) for v in region_lookup.values())
+        if total > max_probes:
+            rng = np.random.default_rng(abs(hash(str(sorted(region_lookup.keys())))) % 2**32)
+            new_lookup = {}
+            for a, regions in region_lookup.items():
+                n_keep = max(1, round(max_probes * len(regions) / total))
+                items = list(regions.items())
+                sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
+                new_lookup[a] = dict(items[i] for i in sampled)
+            region_lookup = new_lookup
 
     ref = _ref_allele(region_seq, motif_pos, snv_index)
     wd = design.build(
@@ -69,29 +83,18 @@ def run_aff_window(
     )
     if wd is None:
         return []
-
     fit = engine.fit(wd.X, wd.y, mode=mode)
-
-    # Match legacy behavior (utils.run_snv_regression):
-    # - Only report alleles that actually have matches in region_lookup
-    # - Exclude the reference allele from the model design; report it with NA/NA
     all_alleles = sorted(region_lookup.keys())
     alt_alleles = [a for a in all_alleles if a != ref]
-
     local_kmer = region_seq[motif_pos : motif_pos + k]
     wildcard = list(local_kmer)
     wildcard[snv_index] = "."
     wildcard_kmer = "".join(wildcard)
-
     rows: List[Dict[str, Any]] = []
-
-    # Always emit A/C/G/T rows like legacy, with NA/NA for the reference allele and
-    # for alleles that have no matched regions.
     for a in ["A", "C", "G", "T"]:
         filled = list(local_kmer)
         filled[snv_index] = a
         filled_kmer = "".join(filled)
-
         if a == ref:
             rows.append(
                 {
@@ -111,7 +114,6 @@ def run_aff_window(
                 }
             )
             continue
-
         if a in all_alleles:
             rows.append(
                 {
@@ -148,7 +150,6 @@ def run_aff_window(
                     "ref": ref,
                 }
             )
-
     return rows
 
 
@@ -162,6 +163,7 @@ def analyze_region_scan(
     mode: str = "nb",
     include_covariates: bool = True,
     fold_half: bool = True,
+    max_probes: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Scan-mode analysis: run AFF for every (motif_pos, snv_index) in the region."""
 
@@ -182,6 +184,7 @@ def analyze_region_scan(
                 include_covariates=include_covariates,
                 fold_half=fold_half,
                 k=k,
+                max_probes=max_probes,
             )
             out.extend(rows)
     return out
@@ -199,6 +202,7 @@ def analyze_snv(
     include_covariates: bool = True,
     fold_half: bool = True,
     rand_n: int = 500,
+    max_probes: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """SNV-mode analysis: AFF for overlapping windows + RAND for each motif_pos."""
 
@@ -240,6 +244,7 @@ def analyze_snv(
                 include_covariates=include_covariates,
                 fold_half=fold_half,
                 k=k,
+                max_probes=max_probes,
             )
         )
 
@@ -266,6 +271,7 @@ def analyze_snv(
         k=k,
         mode=mode,
         fold_half=fold_half,
+        max_probes=max_probes,
     )
 
     return aff_rows + rand_rows
