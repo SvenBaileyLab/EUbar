@@ -343,10 +343,10 @@ def main(argv=None) -> int:
             "--best_pval output. Requires --best_pval."
         ),
     )
-    p.add_argument(
-        "--output-long", type=str, dest="output_long",
-        help="Write a scan-style long TSV (with SNV as first column) to this path",
-    )
+    # p.add_argument(
+    #     "--output-long", type=str, dest="output_long",
+    #     help="Write a scan-style long TSV (with SNV as first column) to this path",
+    # )
     p.add_argument(
         "--mode", choices=["nb", "ols"], default="ols",
         help="Regression type: negative binomial ('nb') or ordinary least squares ('ols')",
@@ -443,8 +443,8 @@ def main(argv=None) -> int:
         else:
             print_motif_effect_table(snv_str, snv.chrom, snv.pos, snv.seq, rows)
 
-        if args.output_long:
-            _append_long_tsv(args.output_long, snv_str, snv.seq, args.kmer_size, rows)
+        # if args.output_long:
+        #     _append_long_tsv(args.output_long, snv_str, snv.seq, args.kmer_size, rows)
 
     return 0
 
