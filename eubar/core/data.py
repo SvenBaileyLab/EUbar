@@ -94,11 +94,8 @@ class IntensityTable:
 
 @dataclass(frozen=True)
 class KmerIndex:
-    """Simple dictionary-backed index: kmer -> {region: offset}."""
-
     kmers: Mapping[str, Mapping[str, int]]
 
-    # cache for wildcard patterns (safe even with frozen=True because dict is mutable)
     _pattern_cache: Dict[str, Mapping[str, int]] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
@@ -106,6 +103,9 @@ class KmerIndex:
     @classmethod
     def from_file(cls, path: str) -> "KmerIndex":
         return cls(read_unique_kmer_positions(path))
+
+    def items(self):
+        return self.kmers.items()
 
     def lookup(self, kmer: str) -> Optional[Mapping[str, int]]:
         # Fast path: exact kmers (current behavior)
