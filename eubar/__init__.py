@@ -1,9 +1,6 @@
-"""EUBAR toolkit.
+from importlib.metadata import version, PackageNotFoundError
 
-Run from CLI:
-  eubar <command> --help
-
-Commands include: array, intensities, scan, snv, motifs.
-"""
-
-__version__ = "1.0.0"
+try:
+    __version__ = version("eubar")
+except PackageNotFoundError:
+    __version__ = "unknown"

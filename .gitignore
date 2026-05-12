@@ -101,3 +101,5 @@ test_figures/
 dev/*
 .Rproj.user
 SNP-SELEX_analysis/*
+indel_test/*
+T47D_FOXA1_motif-fix/*

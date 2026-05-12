@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "eubar"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Regression-based toolkit for modeling sequence effects on transcription factor binding using accessible chromatin as probes"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -26,10 +26,12 @@ dependencies = [
 eubar = "eubar.cli:main"
 
 [project.urls]
-Repository = "https://github.com/5Aki1/EUbar"
+Repository = "https://github.com/SvenBaileyLab/EUbar"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 include = ["eubar*"]
+
+[tool.setuptools_scm]
