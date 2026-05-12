@@ -9,6 +9,10 @@ EUbar predicts the effect of noncoding single nucleotide variants on transcripti
 ## Installation
 
 ```bash
+pip install eubar
+
+# or
+
 git clone https://github.com/SvenBaileyLab/EUbar
 cd EUbar
 pip install .
