@@ -216,7 +216,7 @@ def _plot_aff_motif_effects(rows, save_path):
     print(f"[Info] Figure saved to: {save_path}")
 
 
-def plot_aff_motif_effects(rows, save_path):
+def plot_aff_motif_effects(rows, save_path, reverse=False):
     import matplotlib
     import numpy as np
     import pandas as pd
@@ -303,7 +303,9 @@ def plot_aff_motif_effects(rows, save_path):
 
     step = 10 if region_length > 80 else 5 if region_length > 40 else 1
     axs[1].set_xticks(range(1, int(region_length) + 1, step))
-    axs[1].set_xlim(0.5, region_length + 0.5)
+    axs[1].set_xlim(
+        (region_length + 0.5, 0.5) if reverse else (0.5, region_length + 0.5)
+    )
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)

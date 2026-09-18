@@ -293,7 +293,7 @@ def main(argv=None) -> int:
 
     print_rows_as_tsv(legacy_rows)
     if args.save_figure:
-        plot_aff_motif_effects(legacy_rows, args.save_figure)
+        plot_aff_motif_effects(legacy_rows, args.save_figure, reverse=args.reverse)
     return 0
 
 
