@@ -211,6 +211,7 @@ def build_aff_payloads_for_snv(
     fold_half: bool = True,
     cache_matches: bool = True,
     max_probes: Optional[int] = None,
+    seed: int = 0,
 ) -> Dict[Tuple[int, int], RegressionPayload]:
     """Return {(motif_pos, snv_index): payload} for all windows overlapping the SNV."""
     # Fast path: in SNV mode we only need the single wildcard position that
@@ -225,17 +226,9 @@ def build_aff_payloads_for_snv(
         region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
             snv_index_in_kmer, {}
         )
-        if max_probes is not None:
-            total = sum(len(v) for v in region_lookup.values())
-            if total > max_probes:
-                rng = np.random.default_rng(abs(hash(str(sorted(region_lookup.keys())))) % 2**32)
-                new_lookup = {}
-                for a, regions in region_lookup.items():
-                    n_keep = max(1, round(max_probes * len(regions) / total))
-                    items = list(regions.items())
-                    sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
-                    new_lookup[a] = dict(items[i] for i in sampled)
-                region_lookup = new_lookup
+        region_lookup = subsample_probes(
+            region_lookup, max_probes, seed,
+            ("AFF", snv.seq, motif_pos, snv_index_in_kmer))
         payload = build_aff_payload(
             region_seq=snv.seq,
             motif_pos=motif_pos,
@@ -292,6 +285,7 @@ def build_rand_payloads_for_snv(
     fold_half: bool = True,
     min_n: int = 10,
     max_probes: Optional[int] = None,
+    seed: int = 0,
 ) -> Dict[int, RegressionPayload]:
     """Build RAND regression inputs for each motif position (0..k-1).
 
@@ -330,18 +324,8 @@ def build_rand_payloads_for_snv(
     for j in range(k):
         hit_sets = aff_regions_per_allele.get(j, {}) or {}
 
-        # Subsample hit probes proportionally across alleles if max_probes set
-        if max_probes is not None:
-            total_hits = sum(len(v) for v in hit_sets.values())
-            if total_hits > max_probes:
-                rng = np.random.default_rng(abs(hash(str(sorted(region_lookup.keys())))) % 2**32)
-                new_hit_sets = {}
-                for a, regions in hit_sets.items():
-                    n_keep = max(1, round(max_probes * len(regions) / total_hits))
-                    items = list(regions.items())
-                    sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
-                    new_hit_sets[a] = dict(items[i] for i in sampled)
-                hit_sets = new_hit_sets
+        hit_sets = subsample_probes(
+            hit_sets, max_probes, seed, ("RAND", snv_str, j))
 
         union_counts = {}
         for a in alleles:

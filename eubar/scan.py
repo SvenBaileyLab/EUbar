@@ -246,6 +246,7 @@ def main(argv=None) -> int:
         action="store_true",
         help="Use raw lp in [0,1] (no folding to [0,0.5])",
     )
+    p.add_argument("--seed", type=int, default=0, help="Seed for max-probes subsampling (default: 0); RAND background retains its existing deterministic sampling.")
     p.add_argument(
         "--max-probes", type=int, default=None, dest="max_probes",
         help="Subsample to at most this many probes per window before fitting."
@@ -286,6 +287,7 @@ def main(argv=None) -> int:
             include_covariates=(not args.no_covariates),
             fold_half=(not args.raw_lp),
             max_probes=args.max_probes,
+            seed=args.seed,
         )
         legacy_rows = _to_legacy_rows(rows)
         if args.best_pval:

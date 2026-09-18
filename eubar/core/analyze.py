@@ -20,6 +20,7 @@ import math
 from .design import DesignBuilder
 from .matching import MatchResults, MotifMatcher
 from .rand import RandRegressor, RandSampler
+from .sampling import subsample_probes
 from .regression import RegressionEngine
 from .sequence import RegionWindow, SnvWindow
 
@@ -58,21 +59,13 @@ def run_aff_window(
     fold_half: bool = True,
     k: int = 8,
     max_probes: Optional[int] = None,
+    seed: int = 0,
 ) -> List[Dict[str, Any]]:
     """Fit AFF for one (motif_pos, snv_index) window and return Perl-table rows."""
 
-    # Subsample probes proportionally across alleles if max_probes is set
-    if max_probes is not None:
-        total = sum(len(v) for v in region_lookup.values())
-        if total > max_probes:
-            rng = np.random.default_rng(abs(hash(str(sorted(region_lookup.keys())))) % 2**32)
-            new_lookup = {}
-            for a, regions in region_lookup.items():
-                n_keep = max(1, round(max_probes * len(regions) / total))
-                items = list(regions.items())
-                sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
-                new_lookup[a] = dict(items[i] for i in sampled)
-            region_lookup = new_lookup
+    region_lookup = subsample_probes(
+        region_lookup, max_probes, seed,
+        ("AFF", region_seq, motif_pos, snv_index))
 
     ref = _ref_allele(region_seq, motif_pos, snv_index)
     wd = design.build(
@@ -164,6 +157,7 @@ def analyze_region_scan(
     include_covariates: bool = True,
     fold_half: bool = True,
     max_probes: Optional[int] = None,
+    seed: int = 0,
 ) -> List[Dict[str, Any]]:
     """Scan-mode analysis: run AFF for every (motif_pos, snv_index) in the region."""
 
@@ -185,6 +179,7 @@ def analyze_region_scan(
                 fold_half=fold_half,
                 k=k,
                 max_probes=max_probes,
+                seed=seed,
             )
             out.extend(rows)
     return out
@@ -203,6 +198,7 @@ def analyze_snv(
     fold_half: bool = True,
     rand_n: int = 500,
     max_probes: Optional[int] = None,
+    seed: int = 0,
 ) -> List[Dict[str, Any]]:
     """SNV-mode analysis: AFF for overlapping windows + RAND for each motif_pos."""
 
@@ -245,6 +241,7 @@ def analyze_snv(
                 fold_half=fold_half,
                 k=k,
                 max_probes=max_probes,
+                seed=seed,
             )
         )
 
@@ -272,6 +269,7 @@ def analyze_snv(
         mode=mode,
         fold_half=fold_half,
         max_probes=max_probes,
+        seed=seed,
     )
 
     return aff_rows + rand_rows

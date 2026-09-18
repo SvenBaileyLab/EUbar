@@ -199,6 +199,7 @@ def _print_best_pval_table(
     rand_n=500,
     fold_half=True,
     max_probes=None,
+    seed=0,
 ):
     """Print the compact best_pval TSV rows for one SNV."""
     summary = _best_pval_summary_rows(rows, snv_str)
@@ -211,6 +212,7 @@ def _print_best_pval_table(
                 snv, matcher=matcher, design=design, k=k,
                 include_covariates=True, fold_half=fold_half,
                 max_probes=max_probes,
+                seed=seed,
             )
         except Exception:
             pass
@@ -219,6 +221,7 @@ def _print_best_pval_table(
                 snv=snv, snv_str=snv_str, matcher=matcher, design=design,
                 k=k, rand_n=rand_n, fold_half=fold_half, min_n=10,
                 max_probes=max_probes,
+                seed=seed,
             )
         except Exception:
             pass
@@ -356,6 +359,7 @@ def main(argv=None) -> int:
         "--raw-lp", action="store_true",
         help="Use raw lp in [0,1] (no folding to [0,0.5])",
     )
+    p.add_argument("--seed", type=int, default=0, help="Seed for max-probes subsampling (default: 0); RAND background retains its existing deterministic sampling.")
     p.add_argument(
         "--max-probes", type=int, default=None, dest="max_probes",
         help="Subsample to at most this many probes per window before fitting."
@@ -424,6 +428,7 @@ def main(argv=None) -> int:
             fold_half=fold_half,
             rand_n=(0 if args.no_rand else args.rand_n),
             max_probes=args.max_probes,
+            seed=args.seed,
         )
 
         if args.best_pval:
@@ -439,6 +444,7 @@ def main(argv=None) -> int:
                 rand_n=args.rand_n,
                 fold_half=fold_half,
                 max_probes=args.max_probes,
+                seed=args.seed,
             )
         else:
             print_motif_effect_table(snv_str, snv.chrom, snv.pos, snv.seq, rows)

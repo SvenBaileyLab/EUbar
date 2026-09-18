@@ -23,6 +23,7 @@ import pandas as pd
 
 from .design import fold_lp_half
 from .matching import wildcard_pos_from_offset
+from .sampling import subsample_probes
 from .regression import RegressionEngine
 
 
@@ -111,6 +112,7 @@ class RandRegressor:
         fold_half: bool = True,
         min_n: int = 10,
         max_probes: Optional[int] = None,
+        seed: int = 0,
     ) -> List[Dict]:
         results: List[Dict] = []
         alleles = ["A", "C", "G", "T"]
@@ -119,18 +121,8 @@ class RandRegressor:
             hit_sets = aff_regions_per_allele.get(j, {}) or {}
             bg_map = rand_regions_by_pos.get(j, {}) or {}
 
-            # Subsample hit probes proportionally across alleles if max_probes set
-            if max_probes is not None:
-                total_hits = sum(len(v) for v in hit_sets.values())
-                if total_hits > max_probes:
-                    rng = np.random.default_rng(abs(hash(snv_str + str(j))) % 2**32)
-                    new_hit_sets = {}
-                    for a, regions in hit_sets.items():
-                        n_keep = max(1, round(max_probes * len(regions) / total_hits))
-                        items = list(regions.items())
-                        sampled = rng.choice(len(items), size=min(n_keep, len(items)), replace=False)
-                        new_hit_sets[a] = dict(items[i] for i in sampled)
-                    hit_sets = new_hit_sets
+            hit_sets = subsample_probes(
+                hit_sets, max_probes, seed, ("RAND", snv_str, j))
 
             hit_regions: Set[str] = set()
             for a in alleles:
@@ -140,7 +132,7 @@ class RandRegressor:
 
             rows = []
             y = []
-            for region in all_regions:
+            for region in sorted(all_regions):
                 if region not in self.intensities:
                     continue
                 val = self.intensities[region]
