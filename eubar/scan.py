@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import sys
+from contextlib import redirect_stdout
 from collections import defaultdict
 
 from eubar.core.data import IntensityTable, KmerIndex
@@ -196,6 +198,69 @@ def _pooled_scan_legacy_rows(
     return out
 
 
+def _holm_scan(args, region, matcher, design, engine):
+    """Saturation mutagenesis using the exact SNV fits and within-SNV families.
+
+    Compact output follows ``snv --best-pval --holm``. Genome positions are
+    1-based; reverse-mode alleles are on the reverse-complement strand.
+    Windows include flanking sequence outside the requested scan interval.
+    """
+    from eubar.core.sequence import SnvWindow
+    from eubar.core.analyze import analyze_snv
+    from eubar.snv import (
+        _apply_holm_within_snv, _best_pval_summary_rows, _print_best_pval_table,
+    )
+
+    header = "snv\ttype\tallele\teffect\tpval\traw_pval"
+    if args.diagnostics:
+        header += "\tmotif_pos\twildcard_kmer\tn_probes\tn_allele"
+    print(header)
+    plot_rows = []
+    for offset, ref in enumerate(region.seq):
+        pos = region.end - offset if args.reverse else region.start + offset
+        if ref not in "ACGT":
+            print(f"[WARNING] Skipping {region.chrom}:{pos}: reference {ref}", file=sys.stderr)
+            continue
+        for alt in "ACGT":
+            if alt == ref:
+                continue
+            snv_str = f"{region.chrom}:{pos}:{ref}>{alt}"
+            snv = SnvWindow.from_snv(snv_str, args.genome, k=args.kmer_size)
+            # Avoid silently truncated windows at contig boundaries.
+            if len(snv.seq) != 2 * args.kmer_size - 1:
+                raise ValueError(f"{snv_str}: insufficient reference flanking sequence")
+            rows = analyze_snv(
+                snv=snv, snv_str=snv_str, matcher=matcher, design=design,
+                engine=engine, k=args.kmer_size, mode=args.mode,
+                include_covariates=not args.no_covariates,
+                fold_half=not args.raw_lp,
+                rand_n=0 if args.no_rand else args.rand_n,
+                max_probes=args.max_probes, seed=args.seed,
+            )
+            rows = _apply_holm_within_snv(rows, snv_str)
+            _print_best_pval_table(
+                snv_str, rows, include_rand=not args.no_rand,
+                diagnostics=args.diagnostics, snv=snv, matcher=matcher,
+                design=design, k=args.kmer_size, rand_n=args.rand_n,
+                fold_half=not args.raw_lp, max_probes=args.max_probes,
+                seed=args.seed, holm=True,
+            )
+            if args.save_figure:
+                aff = _best_pval_summary_rows(rows, snv_str, use_holm=True)[0]
+                plot_rows.append([
+                    "", "", offset, 0, "AFF", alt, aff["effect"],
+                    aff["pval"], offset, "snv_holm_best_pval",
+                ])
+    if args.save_figure:
+        if any(math.isfinite(r[6]) and math.isfinite(r[7]) for r in plot_rows):
+            # Offsets and alleles already follow the requested strand.
+            with redirect_stdout(sys.stderr):
+                plot_aff_motif_effects(plot_rows, args.save_figure, reverse=False)
+        else:
+            print("[WARNING] No finite AFF results; figure not written", file=sys.stderr)
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Refactored scan-mode motif regression")
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
@@ -233,7 +298,7 @@ def main(argv=None) -> int:
     grp.add_argument(
         "--best-pval", dest="best_pval",
         action="store_true",
-        help="Summarize non-pooled scan by choosing, for each (position,allele), the overlapping window with the smallest p-value",
+        help="Summarize non-pooled scan by minimum p-value; with --holm, use SNV fits and same-window RAND support instead",
     )
     p.add_argument(
         "--no-covariates", action="store_true", help="Disable lp and sl covariates"
@@ -254,7 +319,26 @@ def main(argv=None) -> int:
     p.add_argument(
         "--save-figure", type=str, help="Filename to save figure (e.g. motif_plot.png)"
     )
+    p.add_argument(
+        "--holm", action="store_true",
+        help="With --best-pval, use SNV fits and within-SNV Holm correction "
+             "(ALT AFF and combined REF/ALT RAND families). Outputs compact SNV "
+             "TSV with adjusted pval and raw_pval; includes flanking windows. "
+             "This does not correct across the whole region.",
+    )
+    p.add_argument("--rand-n", type=int, default=500,
+                   help="RAND background size for --holm (default: 500)")
+    p.add_argument("--no-rand", action="store_true",
+                   help="Disable RAND fits in --holm mode")
+    p.add_argument("--diagnostics", action="store_true",
+                   help="Append SNV diagnostics in --best-pval --holm mode")
     args = p.parse_args(argv)
+    if args.holm and not args.best_pval:
+        p.error("--holm requires --best-pval and cannot be used with --pooled")
+    if not args.holm and (args.diagnostics or args.no_rand or args.rand_n != 500):
+        p.error("--diagnostics, --no-rand and custom --rand-n require --best-pval --holm")
+    if args.kmer_size < 1 or args.rand_n < 0:
+        p.error("--kmer-size must be positive and --rand-n must be non-negative")
 
     intens = IntensityTable.from_file(args.intensities)
     kmers = KmerIndex.from_file(args.array)
@@ -265,6 +349,9 @@ def main(argv=None) -> int:
     matcher = MotifMatcher(kmers.kmers)
     design = DesignBuilder(intens.values)
     engine = RegressionEngine()
+
+    if args.holm:
+        return _holm_scan(args, region, matcher, design, engine)
 
     if args.pooled:
         legacy_rows = _pooled_scan_legacy_rows(

@@ -84,13 +84,79 @@ def _parse_ref_alt_from_snv(snv_str: str):
     return None, None
 
 
-def _best_supported_motif_pos(rows, snv_str: str):
-    """Choose one motif position per SNP using ALT AFF first, then same-position RAND support.
+def _holm_adjust(pvals):
+    """Return Holm-adjusted p-values, preserving NaNs.
 
-    Sorts AFF candidates for the ALT allele by p-value. For each candidate,
-    checks whether at least one of RAND(ref) or RAND(alt) has p < 0.05 and
-    coef > 0 at the same position. Returns the first position that passes.
-    Falls back to the best AFF p-value position if none pass.
+    Holm controls the family-wise error rate under arbitrary dependence.
+    This implementation is dependency-free and equivalent to the standard
+    step-down Holm procedure.
+    """
+    out = [math.nan] * len(pvals)
+    valid = []
+    for i, p in enumerate(pvals):
+        p = _safe_float(p)
+        if math.isfinite(p):
+            valid.append((i, min(max(p, 0.0), 1.0)))
+
+    m = len(valid)
+    if m == 0:
+        return out
+
+    valid.sort(key=lambda x: x[1])
+    running = 0.0
+    for rank, (idx, p) in enumerate(valid, start=1):
+        adjusted = (m - rank + 1) * p
+        running = max(running, adjusted)
+        out[idx] = min(running, 1.0)
+    return out
+
+
+def _apply_holm_within_snv(rows, snv_str: str):
+    """Annotate rows with ``pval_holm`` for the tests used by --best-pval.
+
+    Families are corrected separately:
+      * AFF: ALT-allele AFF tests across motif positions (normally k tests).
+      * RAND: REF + ALT RAND tests across motif positions (normally 2*k tests).
+
+    Other rows are left with pval_holm=NaN because they are not part of the
+    --best-pval decision for the requested SNV. Raw ``pval`` is never changed.
+    """
+    ref, alt = _parse_ref_alt_from_snv(snv_str)
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["pval_holm"] = math.nan
+
+    if alt is None:
+        return out
+
+    aff_idx = [
+        i for i, r in enumerate(out)
+        if r.get("label", "AFF") == "AFF" and r.get("allele") == alt
+        and math.isfinite(_safe_float(r.get("pval")))
+    ]
+    aff_adj = _holm_adjust([out[i].get("pval") for i in aff_idx])
+    for i, q in zip(aff_idx, aff_adj):
+        out[i]["pval_holm"] = q
+
+    rand_alleles = {a for a in (ref, alt) if a is not None}
+    rand_idx = [
+        i for i, r in enumerate(out)
+        if r.get("label", "AFF") == "RAND" and r.get("allele") in rand_alleles
+        and math.isfinite(_safe_float(r.get("pval")))
+    ]
+    rand_adj = _holm_adjust([out[i].get("pval") for i in rand_idx])
+    for i, q in zip(rand_idx, rand_adj):
+        out[i]["pval_holm"] = q
+
+    return out
+
+
+def _best_supported_motif_pos(rows, snv_str: str, *, use_holm: bool = False):
+    """Choose one motif position per SNP using ALT AFF first, then RAND support.
+
+    AFF candidates are ranked by their raw p-value (Holm preserves this order).
+    With ``use_holm=True``, RAND support requires the Holm-adjusted RAND p-value
+    to be < 0.05; otherwise the legacy raw RAND p-value is used.
     """
     ref, alt = _parse_ref_alt_from_snv(snv_str)
     if alt is None:
@@ -111,13 +177,18 @@ def _best_supported_motif_pos(rows, snv_str: str):
         except Exception:
             continue
 
-        p = _safe_float(r.get("pval"))
+        p_raw = _safe_float(r.get("pval"))
+        p_holm = _safe_float(r.get("pval_holm"))
         c = _safe_float(r.get("coef"))
 
-        by_key[(motif_pos, label, allele)] = {"effect": c, "pval": p}
+        by_key[(motif_pos, label, allele)] = {
+            "effect": c,
+            "pval": p_raw,
+            "pval_holm": p_holm,
+        }
 
-        if label == "AFF" and allele == alt and not math.isnan(p):
-            candidates.append((p, -abs(c) if not math.isnan(c) else 0.0, motif_pos))
+        if label == "AFF" and allele == alt and not math.isnan(p_raw):
+            candidates.append((p_raw, -abs(c) if not math.isnan(c) else 0.0, motif_pos))
 
     if not candidates:
         return None
@@ -127,7 +198,8 @@ def _best_supported_motif_pos(rows, snv_str: str):
     def _rand_passes(r):
         if r is None:
             return False
-        p, c = r["pval"], r["effect"]
+        p = r["pval_holm"] if use_holm else r["pval"]
+        c = r["effect"]
         return not math.isnan(p) and not math.isnan(c) and p < 0.05 and c > 0.0
 
     def _passes_rand_support(motif_pos):
@@ -145,10 +217,10 @@ def _best_supported_motif_pos(rows, snv_str: str):
     return candidates[0][2]
 
 
-def _best_pval_summary_rows(rows, snv_str: str):
+def _best_pval_summary_rows(rows, snv_str: str, *, use_holm: bool = False):
     """Return three rows for the chosen motif position: AFF alt, RAND ref, RAND alt."""
     ref, alt = _parse_ref_alt_from_snv(snv_str)
-    chosen_pos = _best_supported_motif_pos(rows, snv_str)
+    chosen_pos = _best_supported_motif_pos(rows, snv_str, use_holm=use_holm)
 
     def _find(label, allele):
         if chosen_pos is None:
@@ -159,11 +231,15 @@ def _best_pval_summary_rows(rows, snv_str: str):
                 and r.get("allele") == allele
                 and _safe_float(r.get("motif_pos")) == float(chosen_pos)
             ):
+                raw_p = _safe_float(r.get("pval"))
+                holm_p = _safe_float(r.get("pval_holm"))
                 return {
                     "type":      label,
                     "allele":    allele,
                     "effect":    _safe_float(r.get("coef")),
-                    "pval":      _safe_float(r.get("pval")),
+                    "pval":      holm_p if use_holm else raw_p,
+                    "raw_pval":  raw_p,
+                    "holm_pval": holm_p,
                     "stat":      _extract_stat(r),
                     "motif_pos": chosen_pos,
                 }
@@ -175,6 +251,8 @@ def _best_pval_summary_rows(rows, snv_str: str):
             "allele":    allele,
             "effect":    math.nan,
             "pval":      math.nan,
+            "raw_pval":  math.nan,
+            "holm_pval": math.nan,
             "stat":      math.nan,
             "motif_pos": chosen_pos,
         }
@@ -200,9 +278,10 @@ def _print_best_pval_table(
     fold_half=True,
     max_probes=None,
     seed=0,
+    holm=False,
 ):
     """Print the compact best_pval TSV rows for one SNV."""
-    summary = _best_pval_summary_rows(rows, snv_str)
+    summary = _best_pval_summary_rows(rows, snv_str, use_holm=holm)
 
     # Build payloads once up front if diagnostics are requested.
     aff_payloads = rand_payloads = {}
@@ -231,6 +310,9 @@ def _print_best_pval_table(
                 continue
             pval_str = _format_pval(r["pval"], stat=r.get("stat", math.nan))
             line = f"{snv_str}\t{r['type']}\t{r['allele']}\t{r['effect']}\t{pval_str}"
+            if holm:
+                raw_pval_str = _format_pval(r.get("raw_pval", math.nan), stat=r.get("stat", math.nan))
+                line += f"\t{raw_pval_str}"
             if diagnostics:
                 chosen_pos = r["motif_pos"]
                 aff_key = next((k for k in aff_payloads if k[0] == chosen_pos), None)
@@ -242,6 +324,33 @@ def _print_best_pval_table(
                     diag = probe_diagnostics(rand_payloads.get(chosen_pos), r["allele"])
                 line += f"\t{chosen_pos}\t{wildcard_kmer}\t{diag['n_probes']}\t{diag['n_allele']}"
             print(line)
+
+
+def _print_motif_effect_table_holm(snv_str, rows):
+    """Print the normal SNV motif table with Holm p in pval and raw_pval appended."""
+    ref, alt = _parse_ref_alt_from_snv(snv_str)
+    for label in ("AFF", "RAND"):
+        alleles = [a for a in (ref, alt) if a in ("A", "C", "G", "T")]
+        for allele in alleles:
+            if label == "AFF" and allele == ref:
+                continue
+            selected = [
+                r for r in rows
+                if r.get("label", "AFF") == label and r.get("allele") == allele
+            ]
+            for r in sorted(selected, key=lambda x: x.get("motif_pos", 0)):
+                raw_p = _safe_float(r.get("pval"))
+                holm_p = _safe_float(r.get("pval_holm"))
+                coef = _safe_float(r.get("coef"))
+                p_out = _format_pval(holm_p, stat=_extract_stat(r))
+                p_raw = _format_pval(raw_p, stat=_extract_stat(r))
+                motif_pos = r.get("motif_pos", "NA")
+                wildcard = r.get("wildcard_kmer", "NA") if label == "AFF" else "NA"
+                coef_str = f"{coef:.7g}" if math.isfinite(coef) else "NA"
+                print(
+                    f"{snv_str}\t{label}\t{allele}\t{motif_pos}\t{wildcard}\t"
+                    f"{coef_str}\t{p_out}\t{p_raw}"
+                )
 
 
 def _format_cell(v):
@@ -340,6 +449,17 @@ def main(argv=None) -> int:
         ),
     )
     p.add_argument(
+        "--holm", action="store_true",
+        help=(
+            "Apply within-SNV Holm correction before --best-pval selection: "
+            "ALT AFF p-values are corrected across motif positions, and REF+ALT "
+            "RAND p-values are corrected together across motif positions. RAND "
+            "support then uses Holm p < 0.05. Output pval is Holm-adjusted and "
+            "raw_pval is appended. Without --best-pval, corrected p-values are "
+            "also shown in the full motif table."
+        ),
+    )
+    p.add_argument(
         "--diagnostics", action="store_true",
         help=(
             "Append diagnostic columns (motif_pos, wildcard_kmer, n_probes, n_allele) to the "
@@ -372,11 +492,16 @@ def main(argv=None) -> int:
 
     if args.best_pval:
         header = "snv\ttype\tallele\teffect\tpval"
+        if args.holm:
+            header += "\traw_pval"
         if args.diagnostics:
             header += "\tmotif_pos\twildcard_kmer\tn_probes\tn_allele"
         print(header)
     else:
-        print("snv\ttype\tallele\tmotif_pos\twildcard_kmer\teffect\tpval")
+        header = "snv\ttype\tallele\tmotif_pos\twildcard_kmer\teffect\tpval"
+        if args.holm:
+            header += "\traw_pval"
+        print(header)
 
     intens = IntensityTable.from_file(args.intensities)
 
@@ -431,6 +556,9 @@ def main(argv=None) -> int:
             seed=args.seed,
         )
 
+        if args.holm:
+            rows = _apply_holm_within_snv(rows, snv_str)
+
         if args.best_pval:
             _print_best_pval_table(
                 snv_str,
@@ -445,9 +573,13 @@ def main(argv=None) -> int:
                 fold_half=fold_half,
                 max_probes=args.max_probes,
                 seed=args.seed,
+                holm=args.holm,
             )
         else:
-            print_motif_effect_table(snv_str, snv.chrom, snv.pos, snv.seq, rows)
+            if args.holm:
+                _print_motif_effect_table_holm(snv_str, rows)
+            else:
+                print_motif_effect_table(snv_str, snv.chrom, snv.pos, snv.seq, rows)
 
         # if args.output_long:
         #     _append_long_tsv(args.output_long, snv_str, snv.seq, args.kmer_size, rows)

@@ -32,6 +32,7 @@ import pandas as pd
 from .design import DesignBuilder, WindowDesign
 from .matching import MotifMatcher
 from .rand import RandSampler
+from .sampling import subsample_probes
 from .sequence import RegionWindow, SnvWindow
 
 
