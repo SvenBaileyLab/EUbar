@@ -27,6 +27,7 @@ import numpy as np
 from eubar.core.data import IntensityTable, KmerIndex
 from eubar.core.sequence import SnvWindow
 from eubar.core.matching import MotifMatcher
+from eubar.core.masking import SequenceMask, MaskedMotifMatcher
 from eubar.core.design import DesignBuilder
 from eubar.core.regression import RegressionEngine
 from eubar.core.analyze import analyze_snv
@@ -436,7 +437,15 @@ _PARENT_SHARED_STATE = None
 _WORKER_STATE = None
 
 
-def _init_snv_worker(intensities_path, array_path, genome_path, config):
+def _make_rand_sampler_for_matcher(matcher):
+    if hasattr(matcher, "make_rand_sampler"):
+        return matcher.make_rand_sampler()
+    return RandSampler(matcher.kmer_positions)
+
+
+def _init_snv_worker(
+    intensities_path, array_path, genome_path, config, prebuilt_matcher=None
+):
     """Initialize one SNP worker and keep heavy objects resident for its lifetime."""
     global _WORKER_STATE
 
@@ -446,13 +455,16 @@ def _init_snv_worker(intensities_path, array_path, genome_path, config):
         design = shared["design"]
     else:
         intens = IntensityTable.from_file(intensities_path)
-        kmers = KmerIndex.from_file(array_path)
-        matcher = MotifMatcher(kmers.kmers)
         design = DesignBuilder(intens.values)
+        if prebuilt_matcher is not None:
+            matcher = prebuilt_matcher
+        else:
+            kmers = KmerIndex.from_file(array_path)
+            matcher = MotifMatcher(kmers.kmers)
 
     engine = RegressionEngine()
     no_rand = bool(config["no_rand"])
-    rand_sampler = None if no_rand else RandSampler(matcher.kmer_positions)
+    rand_sampler = None if no_rand else _make_rand_sampler_for_matcher(matcher)
     rand_regressor = None if no_rand else RandRegressor(
         design.intensities, engine=engine
     )
@@ -476,10 +488,11 @@ def _analyze_one_snv_worker(snv_str):
 
     cfg = state["config"]
     try:
+        analysis_k = int(cfg["analysis_k"])
         snv = SnvWindow.from_snv(
             snv_str,
             state["genome"],
-            k=int(cfg["kmer_size"]),
+            k=analysis_k,
             debug=bool(cfg["debug"]),
         )
         rows = analyze_snv(
@@ -488,7 +501,7 @@ def _analyze_one_snv_worker(snv_str):
             matcher=state["matcher"],
             design=state["design"],
             engine=state["engine"],
-            k=int(cfg["kmer_size"]),
+            k=analysis_k,
             mode=cfg["mode"],
             include_covariates=bool(cfg["include_covariates"]),
             fold_half=bool(cfg["fold_half"]),
@@ -518,8 +531,12 @@ def main(argv=None) -> int:
     group = p.add_mutually_exclusive_group(required=True)
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
     p.add_argument(
-        "--array", "--kmerPositions", dest="array", required=True,
-        help="Path to k-mer array file mapping k-mers to genomic regions",
+        "--array", "--kmerPositions", dest="array", required=False,
+        help=(
+            "Path to k-mer array file mapping k-mers to genomic regions. Required "
+            "for normal contiguous mode; masked mode builds its probe matcher from "
+            "the intensity-region coordinates and reference genome."
+        ),
     )
     p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
     group.add_argument("--snv-list", help="Comma-separated list of SNVs in chr:pos:ref>alt format")
@@ -529,7 +546,15 @@ def main(argv=None) -> int:
     )
     p.add_argument(
         "--kmer-size", "--kmer_size", dest="kmer_size", type=int, default=8,
-        help="K-mer size (default: 8)",
+        help="K-mer size for contiguous mode (default: 8). With --mask, mask span is used instead.",
+    )
+    p.add_argument(
+        "--mask", type=str, default=None,
+        help=(
+            "Explicit spaced/gapped sequence mask, e.g. 11111000011111. "
+            "1 positions are matched; 0 positions are ignored. The SNP is tested "
+            "only at informative (1) positions."
+        ),
     )
     p.add_argument(
         "--rand-n", type=int, default=500,
@@ -551,24 +576,19 @@ def main(argv=None) -> int:
         "--holm", action="store_true",
         help=(
             "Apply within-SNV Holm correction before --best-pval selection: "
-            "ALT AFF p-values are corrected across motif positions, and REF+ALT "
-            "RAND p-values are corrected together across motif positions. RAND "
+            "ALT AFF p-values are corrected across tested positions, and REF+ALT "
+            "RAND p-values are corrected together across tested positions. RAND "
             "support then uses Holm p < 0.05. Output pval is Holm-adjusted and "
-            "raw_pval is appended. Without --best-pval, corrected p-values are "
-            "also shown in the full motif table."
+            "raw_pval is appended."
         ),
     )
     p.add_argument(
         "--diagnostics", action="store_true",
         help=(
-            "Append diagnostic columns (motif_pos, wildcard_kmer, n_probes, n_allele) to the "
-            "--best_pval output. Requires --best_pval."
+            "Append diagnostic columns (motif_pos, wildcard_kmer, n_probes, n_allele) "
+            "to the --best-pval output. Requires --best-pval."
         ),
     )
-    # p.add_argument(
-    #     "--output-long", type=str, dest="output_long",
-    #     help="Write a scan-style long TSV (with SNV as first column) to this path",
-    # )
     p.add_argument(
         "--mode", choices=["nb", "ols"], default="ols",
         help="Regression type: negative binomial ('nb') or ordinary least squares ('ols')",
@@ -578,10 +598,13 @@ def main(argv=None) -> int:
         "--raw-lp", action="store_true",
         help="Use raw lp in [0,1] (no folding to [0,0.5])",
     )
-    p.add_argument("--seed", type=int, default=0, help="Seed for max-probes subsampling (default: 0); RAND background retains its existing deterministic sampling.")
+    p.add_argument(
+        "--seed", type=int, default=0,
+        help="Seed for max-probes subsampling (default: 0); RAND retains deterministic per-SNV sampling.",
+    )
     p.add_argument(
         "--max-probes", type=int, default=None, dest="max_probes",
-        help="Subsample to at most this many probes per window before fitting."
+        help="Subsample to at most this many probes per window before fitting.",
     )
     p.add_argument(
         "--jobs", type=int, default=1,
@@ -597,6 +620,104 @@ def main(argv=None) -> int:
         p.error("--diagnostics requires --best_pval")
     if args.jobs < 1:
         p.error("--jobs must be >= 1")
+    if args.kmer_size < 2:
+        p.error("--kmer-size must be >= 2")
+    if args.rand_n < 1 and not args.no_rand:
+        p.error("--rand-n must be >= 1 unless --no-rand is used")
+    if args.mask is None and not args.array:
+        p.error("--array/--kmerPositions is required unless --mask is supplied")
+
+    mask_obj = None
+    if args.mask is not None:
+        try:
+            mask_obj = SequenceMask.parse(args.mask)
+        except ValueError as exc:
+            p.error(str(exc))
+    analysis_k = mask_obj.span if mask_obj is not None else int(args.kmer_size)
+
+    if args.snv_list_file:
+        with open(args.snv_list_file) as f:
+            snvs = [line.strip() for line in f if line.strip()]
+    else:
+        snvs = [s.strip() for s in (args.snv_list or "").split(",") if s.strip()]
+    if not snvs:
+        p.error("no SNVs supplied")
+
+    intens = IntensityTable.from_file(args.intensities)
+
+    # Warn if intensities appear to be on an intensity_like scale rather than
+    # resid_log. resid_log values are centered near 0 with negative values.
+    _vals = [float(v) for v in intens.values.values() if np.isfinite(v)]
+    if _vals and min(_vals) >= 0:
+        print(
+            "[WARNING] Intensity values appear to be non-negative (min="
+            f"{min(_vals):.3f}). EUbar expects resid_log intensities "
+            "(centered near 0, with negative values). If you used "
+            "'--resid-output intensity_like' when generating intensities, "
+            "please regenerate with '--resid-output resid_log'.",
+            file=sys.stderr,
+        )
+
+    design = DesignBuilder(intens.values)
+    engine = RegressionEngine()
+    prebuilt_windows = {}
+
+    if mask_obj is None:
+        kmers = KmerIndex.from_file(args.array)
+        matcher = MotifMatcher(kmers.kmers)
+    else:
+        # Validate/fetch the SNV contexts once before scanning the probe universe.
+        valid_snvs = []
+        for snv_str in snvs:
+            try:
+                w = SnvWindow.from_snv(
+                    snv_str, args.genome, k=analysis_k, debug=args.debug,
+                )
+            except Exception as exc:
+                print(f"[ERROR] {snv_str}: {exc}", file=sys.stderr)
+                continue
+            valid_snvs.append(snv_str)
+            prebuilt_windows[snv_str] = w
+        snvs = valid_snvs
+        if not snvs:
+            return 1
+
+        probe_regions = [
+            region for region, value in intens.values.items()
+            if value is not None and np.isfinite(value)
+        ]
+        print(
+            f"[MASK] building matcher mask={mask_obj.pattern} "
+            f"span={mask_obj.span} informative={mask_obj.n_informative} "
+            f"probes={len(probe_regions):,}",
+            file=sys.stderr,
+        )
+        matcher = MaskedMotifMatcher.build(
+            mask=mask_obj,
+            snv_windows=[prebuilt_windows[s] for s in snvs],
+            probe_regions=probe_regions,
+            genome_fasta=args.genome,
+        )
+        st = matcher.stats
+        print(
+            f"[MASK] indexed {st.n_windows:,} probe windows; "
+            f"target signatures={st.n_target_signatures:,}; "
+            f"target hits={st.n_target_region_hits:,}; "
+            f"RAND signatures={st.n_rand_signatures:,}",
+            file=sys.stderr,
+        )
+        if args.array:
+            print(
+                "[MASK] note: --array/--kmerPositions is not used for masked matching; "
+                "the matcher is built from intensity-region coordinates + genome.",
+                file=sys.stderr,
+            )
+
+    rand_sampler = None if args.no_rand else _make_rand_sampler_for_matcher(matcher)
+    rand_regressor = None if args.no_rand else RandRegressor(
+        design.intensities, engine=engine
+    )
+    fold_half = not args.raw_lp
 
     if args.best_pval:
         header = "snv\ttype\tallele\teffect\tpval"
@@ -611,43 +732,6 @@ def main(argv=None) -> int:
             header += "\traw_pval"
         print(header)
 
-    intens = IntensityTable.from_file(args.intensities)
-
-    # Warn if intensities appear to be on an intensity_like scale rather than
-    # resid_log. resid_log values are centered near 0 with negative values;
-    # intensity_like values are strictly non-negative. If the minimum value
-    # is >= 0, the file is likely intensity_like which will give wrong results.
-    _vals = list(intens.values.values())
-    if _vals and min(_vals) >= 0:
-        print(
-            "[WARNING] Intensity values appear to be non-negative (min="
-            f"{min(_vals):.3f}). EUbar expects resid_log intensities "
-            "(centered near 0, with negative values). If you used "
-            "'--resid-output intensity_like' when generating intensities, "
-            "please regenerate with '--resid-output resid_log'.",
-            file=sys.stderr,
-        )
-    kmers = KmerIndex.from_file(args.array)
-    matcher = MotifMatcher(kmers.kmers)
-    design = DesignBuilder(intens.values)
-    engine = RegressionEngine()
-
-    # These objects are immutable with respect to the input index/intensities and
-    # can be safely reused across SNVs.  Reuse avoids rebuilding RAND k-mer
-    # bookkeeping and allows RandSampler's region-key cache to persist.
-    rand_sampler = None if args.no_rand else RandSampler(matcher.kmer_positions)
-    rand_regressor = None if args.no_rand else RandRegressor(
-        design.intensities, engine=engine
-    )
-
-    fold_half = not args.raw_lp
-
-    if args.snv_list_file:
-        with open(args.snv_list_file) as f:
-            snvs = [line.strip() for line in f if line.strip()]
-    else:
-        snvs = [s.strip() for s in (args.snv_list or "").split(",") if s.strip()]
-
     def emit_result(snv_str, snv, rows):
         if args.holm:
             rows = _apply_holm_within_snv(rows, snv_str)
@@ -661,7 +745,7 @@ def main(argv=None) -> int:
                 snv=snv,
                 matcher=matcher,
                 design=design,
-                k=args.kmer_size,
+                k=analysis_k,
                 rand_n=args.rand_n,
                 fold_half=fold_half,
                 max_probes=args.max_probes,
@@ -679,9 +763,11 @@ def main(argv=None) -> int:
     if args.jobs == 1 or len(snvs) <= 1:
         for snv_str in snvs:
             try:
-                snv = SnvWindow.from_snv(
-                    snv_str, args.genome, k=args.kmer_size, debug=args.debug,
-                )
+                snv = prebuilt_windows.get(snv_str)
+                if snv is None:
+                    snv = SnvWindow.from_snv(
+                        snv_str, args.genome, k=analysis_k, debug=args.debug,
+                    )
             except Exception as e:
                 print(f"[ERROR] {snv_str}: {e}", file=sys.stderr)
                 continue
@@ -692,7 +778,7 @@ def main(argv=None) -> int:
                 matcher=matcher,
                 design=design,
                 engine=engine,
-                k=args.kmer_size,
+                k=analysis_k,
                 mode=args.mode,
                 include_covariates=(not args.no_covariates),
                 fold_half=fold_half,
@@ -704,9 +790,10 @@ def main(argv=None) -> int:
             )
             emit_result(snv_str, snv, rows)
     else:
-        # Load-heavy objects already exist in the parent. On Linux/WSL, fork lets
-        # workers inherit them copy-on-write instead of reparsing the array file.
-        # On spawn-only platforms the initializer loads them once per worker.
+        # On Linux/WSL, fork lets workers inherit the large read-only matcher
+        # copy-on-write. Spawn platforms receive the prebuilt masked matcher as
+        # an initializer argument; ordinary contiguous mode keeps its old load-once
+        # fallback behavior.
         global _PARENT_SHARED_STATE
         _PARENT_SHARED_STATE = {
             "matcher": matcher,
@@ -714,7 +801,7 @@ def main(argv=None) -> int:
         }
 
         worker_cfg = {
-            "kmer_size": args.kmer_size,
+            "analysis_k": analysis_k,
             "mode": args.mode,
             "include_covariates": (not args.no_covariates),
             "fold_half": fold_half,
@@ -737,10 +824,10 @@ def main(argv=None) -> int:
                     args.array,
                     args.genome,
                     worker_cfg,
+                    (matcher if mask_obj is not None else None),
                 ),
             ) as pool:
-                # executor.map preserves input order, so parallel output is byte-for-
-                # byte comparable to --jobs 1 when numerical results are identical.
+                # executor.map preserves input order, so stdout remains deterministic.
                 for snv_str, snv, rows, err in pool.map(
                     _analyze_one_snv_worker, snvs, chunksize=1
                 ):

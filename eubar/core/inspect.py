@@ -150,6 +150,7 @@ def build_aff_payload(
     k: int = 8,
     include_covariates: bool = True,
     fold_half: bool = True,
+    mask_pattern: Optional[str] = None,
 ) -> Optional[RegressionPayload]:
     """Build the exact AFF WindowDesign payload used for regression.
 
@@ -195,7 +196,14 @@ def build_aff_payload(
         snv_index=snv_index,
         ref_allele=ref,
         local_kmer=local_kmer,
-        wildcard_kmer=_wildcard_kmer(local_kmer, snv_index),
+        wildcard_kmer=(
+            "".join(
+                "." if i == snv_index else (b if mask_pattern[i] == "1" else "x")
+                for i, b in enumerate(local_kmer)
+            )
+            if mask_pattern is not None
+            else _wildcard_kmer(local_kmer, snv_index)
+        ),
         X=wd.X,
         y=wd.y,
         meta=meta,
@@ -218,12 +226,16 @@ def build_aff_payloads_for_snv(
     # Fast path: in SNV mode we only need the single wildcard position that
     # corresponds to the SNV for each overlapping window (8× less work than
     # the full scan).
+    windows = list(snv.iter_overlapping_windows())
+    if hasattr(matcher, "filter_windows"):
+        windows = list(matcher.filter_windows(windows))
     if hasattr(matcher, "scan_snv"):
-        matches = matcher.scan_snv(snv.seq, k, snv.iter_overlapping_windows())
+        matches = matcher.scan_snv(snv.seq, k, windows)
     else:
         matches = matcher.scan(snv.seq, k)
+    mask_pattern = getattr(matcher, "mask_pattern", None)
     out: Dict[Tuple[int, int], RegressionPayload] = {}
-    for motif_pos, snv_index_in_kmer in snv.iter_overlapping_windows():
+    for motif_pos, snv_index_in_kmer in windows:
         region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
             snv_index_in_kmer, {}
         )
@@ -239,6 +251,7 @@ def build_aff_payloads_for_snv(
             k=k,
             include_covariates=include_covariates,
             fold_half=fold_half,
+            mask_pattern=mask_pattern,
         )
         if payload is not None:
             out[(motif_pos, snv_index_in_kmer)] = payload
@@ -293,16 +306,20 @@ def build_rand_payloads_for_snv(
     This mirrors the data path used by analyze_snv() (sampling excluded regions from AFF).
     It returns payloads *without fitting*.
     """
+    windows = list(snv.iter_overlapping_windows())
+    if hasattr(matcher, "filter_windows"):
+        windows = list(matcher.filter_windows(windows))
     if hasattr(matcher, "scan_snv"):
-        matches = matcher.scan_snv(snv.seq, k, snv.iter_overlapping_windows())
+        matches = matcher.scan_snv(snv.seq, k, windows)
     else:
         matches = matcher.scan(snv.seq, k)
 
+    wildcard_index_by_pos = {int(m): int(j) for m, j in windows}
     aff_regions_per_allele: Dict[int, Dict[str, Dict[str, int]]] = {
         j: {} for j in range(k)
     }
     matched_regions_all: set[str] = set()
-    for motif_pos, snv_index_in_kmer in snv.iter_overlapping_windows():
+    for motif_pos, snv_index_in_kmer in windows:
         region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
             snv_index_in_kmer, {}
         )
@@ -314,10 +331,17 @@ def build_rand_payloads_for_snv(
         for m in region_lookup.values():
             matched_regions_all.update(m.keys())
 
-    sampler = RandSampler(matcher.kmer_positions)
-    sample = sampler.sample(
+    sampler = (
+        matcher.make_rand_sampler()
+        if hasattr(matcher, "make_rand_sampler")
+        else RandSampler(matcher.kmer_positions)
+    )
+    sample_kwargs = dict(
         matched_regions=matched_regions_all, snv_str=snv_str, k=k, rand_n=rand_n
     )
+    if getattr(matcher, "is_masked", False):
+        sample_kwargs["positions"] = wildcard_index_by_pos
+    sample = sampler.sample(**sample_kwargs)
 
     payloads: Dict[int, RegressionPayload] = {}
     alleles = ["A", "C", "G", "T"]
@@ -384,12 +408,15 @@ def build_rand_payloads_for_snv(
                 offset = bg_map.get(region, None)
                 if offset is None:
                     continue
-                # In current codepath, background offsets are always taken as forward.
-                from .matching import wildcard_pos_from_offset
+                if getattr(sample, "values_are_wildcard_pos", False):
+                    wildcard_pos = int(offset)
+                else:
+                    # Legacy contiguous RAND stores k-mer offsets.
+                    from .matching import wildcard_pos_from_offset
 
-                wildcard_pos = wildcard_pos_from_offset(
-                    offset=int(offset), j=j, kmer_size=k, is_reverse=False
-                )
+                    wildcard_pos = wildcard_pos_from_offset(
+                        offset=int(offset), j=j, kmer_size=k, is_reverse=False
+                    )
 
             lp_val = (float(wildcard_pos) / float(length)) if length > 0 else 0.5
             if fold_half:

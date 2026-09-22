@@ -60,6 +60,7 @@ def run_aff_window(
     k: int = 8,
     max_probes: Optional[int] = None,
     seed: int = 0,
+    mask_pattern: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Fit AFF for one (motif_pos, snv_index) window and return Perl-table rows."""
 
@@ -82,12 +83,24 @@ def run_aff_window(
     local_kmer = region_seq[motif_pos : motif_pos + k]
     wildcard = list(local_kmer)
     wildcard[snv_index] = "."
-    wildcard_kmer = "".join(wildcard)
+    if mask_pattern is not None:
+        wildcard_kmer = "".join(
+            "." if i == snv_index else (base if mask_pattern[i] == "1" else "x")
+            for i, base in enumerate(local_kmer)
+        )
+    else:
+        wildcard_kmer = "".join(wildcard)
     rows: List[Dict[str, Any]] = []
     for a in ["A", "C", "G", "T"]:
         filled = list(local_kmer)
         filled[snv_index] = a
-        filled_kmer = "".join(filled)
+        if mask_pattern is not None:
+            filled_kmer = "".join(
+                (a if i == snv_index else base) if mask_pattern[i] == "1" else "x"
+                for i, base in enumerate(local_kmer)
+            )
+        else:
+            filled_kmer = "".join(filled)
         if a == ref:
             rows.append(
                 {
@@ -104,6 +117,9 @@ def run_aff_window(
                     "model": fit.model,
                     "method": "na_ref",
                     "ref": ref,
+                    "mask": mask_pattern,
+                    "mask_span": k if mask_pattern is not None else None,
+                    "mask_pos": snv_index if mask_pattern is not None else None,
                 }
             )
             continue
@@ -123,6 +139,9 @@ def run_aff_window(
                     "model": fit.model,
                     "method": fit.method,
                     "ref": ref,
+                    "mask": mask_pattern,
+                    "mask_span": k if mask_pattern is not None else None,
+                    "mask_pos": snv_index if mask_pattern is not None else None,
                 }
             )
         else:
@@ -141,6 +160,9 @@ def run_aff_window(
                     "model": fit.model,
                     "method": "na_missing",
                     "ref": ref,
+                    "mask": mask_pattern,
+                    "mask_span": k if mask_pattern is not None else None,
+                    "mask_pos": snv_index if mask_pattern is not None else None,
                 }
             )
     return rows
@@ -213,7 +235,14 @@ def analyze_snv(
     # Using scan_snv avoids the k-fold extra work performed by the generic
     # region scanner, while returning the same MatchResults contract.
     overlapping_windows = list(snv.iter_overlapping_windows())
+    if hasattr(matcher, "filter_windows"):
+        overlapping_windows = list(matcher.filter_windows(overlapping_windows))
     matches = matcher.scan_snv(snv.seq, k, overlapping_windows)
+    wildcard_index_by_pos = {
+        int(motif_pos): int(snv_index)
+        for motif_pos, snv_index in overlapping_windows
+    }
+    mask_pattern = getattr(matcher, "mask_pattern", None)
 
     # AFF for the k overlapping windows
     aff_rows: List[Dict[str, Any]] = []
@@ -253,6 +282,7 @@ def analyze_snv(
                 k=k,
                 max_probes=max_probes,
                 seed=seed,
+                mask_pattern=mask_pattern,
             )
         )
 
@@ -261,13 +291,22 @@ def analyze_snv(
         return aff_rows
 
     # RAND sampling/regression
-    sampler = rand_sampler or RandSampler(matcher.kmer_positions)
-    sample = sampler.sample(
+    if rand_sampler is not None:
+        sampler = rand_sampler
+    elif hasattr(matcher, "make_rand_sampler"):
+        sampler = matcher.make_rand_sampler()
+    else:
+        sampler = RandSampler(matcher.kmer_positions)
+
+    sample_kwargs = dict(
         matched_regions=matched_regions_all,
         snv_str=snv_str,
         k=k,
         rand_n=rand_n,
     )
+    if getattr(matcher, "is_masked", False):
+        sample_kwargs["positions"] = wildcard_index_by_pos
+    sample = sampler.sample(**sample_kwargs)
     rand_reg = rand_regressor or RandRegressor(design.intensities, engine=engine)
     rand_rows = rand_reg.fit(
         aff_regions_per_allele=aff_regions_per_allele,
@@ -278,6 +317,12 @@ def analyze_snv(
         fold_half=fold_half,
         max_probes=max_probes,
         seed=seed,
+        wildcard_index_by_pos=(
+            wildcard_index_by_pos if getattr(matcher, "is_masked", False) else None
+        ),
+        rand_values_are_wildcard_pos=bool(
+            getattr(sample, "values_are_wildcard_pos", False)
+        ),
     )
 
     return aff_rows + rand_rows

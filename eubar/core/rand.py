@@ -34,8 +34,9 @@ def deterministic_hash(s: str) -> int:
 
 @dataclass(frozen=True)
 class RandSample:
-    by_pos: Mapping[int, Mapping[str, int]]  # motif_pos -> {region: offset}
+    by_pos: Mapping[int, Mapping[str, int]]  # motif_pos -> {region: offset/wildcard_pos}
     used_all: Set[str]
+    values_are_wildcard_pos: bool = False
 
 
 class RandSampler:
@@ -115,6 +116,8 @@ class RandRegressor:
         min_n: int = 10,
         max_probes: Optional[int] = None,
         seed: int = 0,
+        wildcard_index_by_pos: Optional[Mapping[int, int]] = None,
+        rand_values_are_wildcard_pos: bool = False,
     ) -> List[Dict]:
         results: List[Dict] = []
         alleles = ["A", "C", "G", "T"]
@@ -162,9 +165,17 @@ class RandRegressor:
                     offset = bg_map.get(region, None)
                     if offset is None:
                         continue
-                    wildcard_pos = wildcard_pos_from_offset(
-                        offset=int(offset), j=j, kmer_size=k, is_reverse=False
-                    )
+                    if rand_values_are_wildcard_pos:
+                        wildcard_pos = int(offset)
+                    else:
+                        wildcard_j = (
+                            int(wildcard_index_by_pos.get(j, j))
+                            if wildcard_index_by_pos is not None
+                            else j
+                        )
+                        wildcard_pos = wildcard_pos_from_offset(
+                            offset=int(offset), j=wildcard_j, kmer_size=k, is_reverse=False
+                        )
 
                 lp_val = (wildcard_pos / length) if length > 0 else 0.5
                 if fold_half:
