@@ -42,6 +42,10 @@ class RandSampler:
     def __init__(self, kmers: Mapping[str, Mapping[str, int]]):
         self.kmers = kmers
         self._kmer_keys = list(kmers.keys())
+        # Persistent cache: a RandSampler is reusable across many SNVs, so keep
+        # the expensive dict-keys -> list conversion rather than rebuilding it
+        # for every sample() call.  The underlying k-mer index is read-only.
+        self._region_key_cache: Dict[str, List[str]] = {}
 
     def sample(
         self,
@@ -54,9 +58,7 @@ class RandSampler:
         import random
 
         rng = random.Random(deterministic_hash(snv_str) + 1337)
-        # Cache kmer -> list(region) so we don't rebuild lists on every attempt.
-        # This is a big win because RAND sampling may perform many thousands of attempts.
-        region_key_cache: Dict[str, List[str]] = {}
+        # Reuse kmer -> list(region) conversions across SNVs.
         by_pos: Dict[int, Dict[str, int]] = {j: {} for j in range(k)}
         used_all: Set[str] = set()
 
@@ -72,11 +74,11 @@ class RandSampler:
                 if not region_map:
                     continue
 
-                keys = region_key_cache.get(kmer)
+                keys = self._region_key_cache.get(kmer)
                 if keys is None:
-                    # Convert once; keep as list for random.choice
+                    # Convert once; keep as list for random.choice.
                     keys = list(region_map.keys())
-                    region_key_cache[kmer] = keys
+                    self._region_key_cache[kmer] = keys
                 if not keys:
                     continue
 

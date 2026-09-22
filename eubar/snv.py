@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+# EUbar SNV regressions are tiny; multithreaded BLAS adds substantial overhead.
+# Default to one numerical-library thread per process. Advanced users can override
+# this before launch with EUBAR_BLAS_THREADS (for example, EUBAR_BLAS_THREADS=2).
+import os
+_BLAS_THREADS = os.environ.get("EUBAR_BLAS_THREADS", "1")
+for _env_name in (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ[_env_name] = _BLAS_THREADS
+
 import csv
 import argparse
 import sys
 import math
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
@@ -15,6 +30,7 @@ from eubar.core.matching import MotifMatcher
 from eubar.core.design import DesignBuilder
 from eubar.core.regression import RegressionEngine
 from eubar.core.analyze import analyze_snv
+from eubar.core.rand import RandRegressor, RandSampler
 from eubar.core.reporting import print_motif_effect_table
 from eubar.core.inspect import (
     build_aff_payloads_for_snv,
@@ -414,6 +430,89 @@ def _append_long_tsv(out_path, snv_str, seq, k, dict_rows):
             w.writerow(row)
 
 
+# Parent-loaded objects are inherited cheaply by fork-based workers on Linux/WSL.
+# Spawn-based platforms fall back to loading the two input tables once per worker.
+_PARENT_SHARED_STATE = None
+_WORKER_STATE = None
+
+
+def _init_snv_worker(intensities_path, array_path, genome_path, config):
+    """Initialize one SNP worker and keep heavy objects resident for its lifetime."""
+    global _WORKER_STATE
+
+    shared = _PARENT_SHARED_STATE
+    if shared is not None:
+        matcher = shared["matcher"]
+        design = shared["design"]
+    else:
+        intens = IntensityTable.from_file(intensities_path)
+        kmers = KmerIndex.from_file(array_path)
+        matcher = MotifMatcher(kmers.kmers)
+        design = DesignBuilder(intens.values)
+
+    engine = RegressionEngine()
+    no_rand = bool(config["no_rand"])
+    rand_sampler = None if no_rand else RandSampler(matcher.kmer_positions)
+    rand_regressor = None if no_rand else RandRegressor(
+        design.intensities, engine=engine
+    )
+
+    _WORKER_STATE = {
+        "matcher": matcher,
+        "design": design,
+        "engine": engine,
+        "rand_sampler": rand_sampler,
+        "rand_regressor": rand_regressor,
+        "genome": genome_path,
+        "config": dict(config),
+    }
+
+
+def _analyze_one_snv_worker(snv_str):
+    """Process one SNV and return data to the parent; never print from workers."""
+    state = _WORKER_STATE
+    if state is None:
+        return snv_str, None, None, "worker was not initialized"
+
+    cfg = state["config"]
+    try:
+        snv = SnvWindow.from_snv(
+            snv_str,
+            state["genome"],
+            k=int(cfg["kmer_size"]),
+            debug=bool(cfg["debug"]),
+        )
+        rows = analyze_snv(
+            snv=snv,
+            snv_str=snv_str,
+            matcher=state["matcher"],
+            design=state["design"],
+            engine=state["engine"],
+            k=int(cfg["kmer_size"]),
+            mode=cfg["mode"],
+            include_covariates=bool(cfg["include_covariates"]),
+            fold_half=bool(cfg["fold_half"]),
+            rand_n=int(cfg["rand_n"]),
+            max_probes=cfg["max_probes"],
+            seed=int(cfg["seed"]),
+            rand_sampler=state["rand_sampler"],
+            rand_regressor=state["rand_regressor"],
+        )
+        return snv_str, snv, rows, None
+    except Exception as exc:
+        return snv_str, None, None, str(exc)
+
+
+def _preferred_mp_context():
+    """Prefer fork on POSIX so the large read-only k-mer index is copy-on-write."""
+    try:
+        if "fork" in mp.get_all_start_methods():
+            return mp.get_context("fork")
+    except Exception:
+        pass
+    return mp.get_context("spawn")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Run motif regression on SNV(s)")
     group = p.add_mutually_exclusive_group(required=True)
@@ -484,11 +583,20 @@ def main(argv=None) -> int:
         "--max-probes", type=int, default=None, dest="max_probes",
         help="Subsample to at most this many probes per window before fitting."
     )
+    p.add_argument(
+        "--jobs", type=int, default=1,
+        help=(
+            "Number of SNVs to process in parallel (default: 1). Each worker "
+            "uses one BLAS thread by default to avoid oversubscription."
+        ),
+    )
     p.add_argument("--debug", action="store_true", help="Print additional debugging information")
     args = p.parse_args(argv)
 
     if args.diagnostics and not args.best_pval:
         p.error("--diagnostics requires --best_pval")
+    if args.jobs < 1:
+        p.error("--jobs must be >= 1")
 
     if args.best_pval:
         header = "snv\ttype\tallele\teffect\tpval"
@@ -524,6 +632,14 @@ def main(argv=None) -> int:
     design = DesignBuilder(intens.values)
     engine = RegressionEngine()
 
+    # These objects are immutable with respect to the input index/intensities and
+    # can be safely reused across SNVs.  Reuse avoids rebuilding RAND k-mer
+    # bookkeeping and allows RandSampler's region-key cache to persist.
+    rand_sampler = None if args.no_rand else RandSampler(matcher.kmer_positions)
+    rand_regressor = None if args.no_rand else RandRegressor(
+        design.intensities, engine=engine
+    )
+
     fold_half = not args.raw_lp
 
     if args.snv_list_file:
@@ -532,30 +648,7 @@ def main(argv=None) -> int:
     else:
         snvs = [s.strip() for s in (args.snv_list or "").split(",") if s.strip()]
 
-    for snv_str in snvs:
-        try:
-            snv = SnvWindow.from_snv(
-                snv_str, args.genome, k=args.kmer_size, debug=args.debug,
-            )
-        except Exception as e:
-            print(f"[ERROR] {snv_str}: {e}", file=sys.stderr)
-            continue
-
-        rows = analyze_snv(
-            snv=snv,
-            snv_str=snv_str,
-            matcher=matcher,
-            design=design,
-            engine=engine,
-            k=args.kmer_size,
-            mode=args.mode,
-            include_covariates=(not args.no_covariates),
-            fold_half=fold_half,
-            rand_n=(0 if args.no_rand else args.rand_n),
-            max_probes=args.max_probes,
-            seed=args.seed,
-        )
-
+    def emit_result(snv_str, snv, rows):
         if args.holm:
             rows = _apply_holm_within_snv(rows, snv_str)
 
@@ -579,10 +672,84 @@ def main(argv=None) -> int:
             if args.holm:
                 _print_motif_effect_table_holm(snv_str, rows)
             else:
-                print_motif_effect_table(snv_str, snv.chrom, snv.pos, snv.seq, rows)
+                print_motif_effect_table(
+                    snv_str, snv.chrom, snv.pos, snv.seq, rows
+                )
 
-        # if args.output_long:
-        #     _append_long_tsv(args.output_long, snv_str, snv.seq, args.kmer_size, rows)
+    if args.jobs == 1 or len(snvs) <= 1:
+        for snv_str in snvs:
+            try:
+                snv = SnvWindow.from_snv(
+                    snv_str, args.genome, k=args.kmer_size, debug=args.debug,
+                )
+            except Exception as e:
+                print(f"[ERROR] {snv_str}: {e}", file=sys.stderr)
+                continue
+
+            rows = analyze_snv(
+                snv=snv,
+                snv_str=snv_str,
+                matcher=matcher,
+                design=design,
+                engine=engine,
+                k=args.kmer_size,
+                mode=args.mode,
+                include_covariates=(not args.no_covariates),
+                fold_half=fold_half,
+                rand_n=(0 if args.no_rand else args.rand_n),
+                max_probes=args.max_probes,
+                seed=args.seed,
+                rand_sampler=rand_sampler,
+                rand_regressor=rand_regressor,
+            )
+            emit_result(snv_str, snv, rows)
+    else:
+        # Load-heavy objects already exist in the parent. On Linux/WSL, fork lets
+        # workers inherit them copy-on-write instead of reparsing the array file.
+        # On spawn-only platforms the initializer loads them once per worker.
+        global _PARENT_SHARED_STATE
+        _PARENT_SHARED_STATE = {
+            "matcher": matcher,
+            "design": design,
+        }
+
+        worker_cfg = {
+            "kmer_size": args.kmer_size,
+            "mode": args.mode,
+            "include_covariates": (not args.no_covariates),
+            "fold_half": fold_half,
+            "rand_n": (0 if args.no_rand else args.rand_n),
+            "max_probes": args.max_probes,
+            "seed": args.seed,
+            "no_rand": args.no_rand,
+            "debug": args.debug,
+        }
+        n_workers = min(int(args.jobs), len(snvs))
+        ctx = _preferred_mp_context()
+
+        try:
+            with ProcessPoolExecutor(
+                max_workers=n_workers,
+                mp_context=ctx,
+                initializer=_init_snv_worker,
+                initargs=(
+                    args.intensities,
+                    args.array,
+                    args.genome,
+                    worker_cfg,
+                ),
+            ) as pool:
+                # executor.map preserves input order, so parallel output is byte-for-
+                # byte comparable to --jobs 1 when numerical results are identical.
+                for snv_str, snv, rows, err in pool.map(
+                    _analyze_one_snv_worker, snvs, chunksize=1
+                ):
+                    if err is not None:
+                        print(f"[ERROR] {snv_str}: {err}", file=sys.stderr)
+                        continue
+                    emit_result(snv_str, snv, rows)
+        finally:
+            _PARENT_SHARED_STATE = None
 
     return 0
 

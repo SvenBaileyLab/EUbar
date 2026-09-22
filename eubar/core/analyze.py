@@ -199,10 +199,21 @@ def analyze_snv(
     rand_n: int = 500,
     max_probes: Optional[int] = None,
     seed: int = 0,
+    rand_sampler: Optional[RandSampler] = None,
+    rand_regressor: Optional[RandRegressor] = None,
 ) -> List[Dict[str, Any]]:
-    """SNV-mode analysis: AFF for overlapping windows + RAND for each motif_pos."""
+    """SNV-mode analysis: AFF for overlapping windows + RAND for each motif_pos.
 
-    matches = matcher.scan(snv.seq, k)
+    ``rand_sampler`` and ``rand_regressor`` may be reused across SNVs to avoid
+    rebuilding immutable RAND bookkeeping for every variant.  Callers that do
+    not supply them retain the legacy behavior.
+    """
+
+    # SNV mode only needs one wildcard position per overlapping k-mer window.
+    # Using scan_snv avoids the k-fold extra work performed by the generic
+    # region scanner, while returning the same MatchResults contract.
+    overlapping_windows = list(snv.iter_overlapping_windows())
+    matches = matcher.scan_snv(snv.seq, k, overlapping_windows)
 
     # AFF for the k overlapping windows
     aff_rows: List[Dict[str, Any]] = []
@@ -213,7 +224,7 @@ def analyze_snv(
     }
     matched_regions_all: set[str] = set()
 
-    for motif_pos, snv_index_in_kmer in snv.iter_overlapping_windows():
+    for motif_pos, snv_index_in_kmer in overlapping_windows:
         region_lookup = matches.allele_region_offsets.get(motif_pos, {}).get(
             snv_index_in_kmer, {}
         )
@@ -250,17 +261,14 @@ def analyze_snv(
         return aff_rows
 
     # RAND sampling/regression
-    if rand_n <= 0:
-        return aff_rows
-
-    sampler = RandSampler(matcher.kmer_positions)
+    sampler = rand_sampler or RandSampler(matcher.kmer_positions)
     sample = sampler.sample(
         matched_regions=matched_regions_all,
         snv_str=snv_str,
         k=k,
         rand_n=rand_n,
     )
-    rand_reg = RandRegressor(design.intensities, engine=engine)
+    rand_reg = rand_regressor or RandRegressor(design.intensities, engine=engine)
     rand_rows = rand_reg.fit(
         aff_regions_per_allele=aff_regions_per_allele,
         rand_regions_by_pos=sample.by_pos,

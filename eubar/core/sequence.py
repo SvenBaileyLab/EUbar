@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Iterator, Tuple
 
 try:
@@ -24,16 +25,22 @@ def parse_snv(s: str) -> Tuple[str, int, str, str]:
     return chrom, int(pos_s), ref.upper(), alt.upper()
 
 
-def fetch_sequence(
-    genome_fasta: str, chrom: str, start_1based: int, end_1based_inclusive: int
-) -> str:
-    """Fetch sequence from FASTA, 1-based inclusive coordinates."""
+@lru_cache(maxsize=4)
+def _open_fasta(genome_fasta: str):
+    """Open each FASTA at most once per process."""
     if Fasta is None:
         raise ImportError(
             "pyfaidx is required to read the genome FASTA (pip install pyfaidx), "
             "or run in an environment where pyfaidx is available."
         )
-    genome = Fasta(genome_fasta)
+    return Fasta(genome_fasta)
+
+
+def fetch_sequence(
+    genome_fasta: str, chrom: str, start_1based: int, end_1based_inclusive: int
+) -> str:
+    """Fetch sequence from FASTA, 1-based inclusive coordinates."""
+    genome = _open_fasta(genome_fasta)
     return genome[chrom][start_1based - 1 : end_1based_inclusive].seq.upper()
 
 
