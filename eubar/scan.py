@@ -264,53 +264,44 @@ def _holm_scan(args, region, matcher, design, engine):
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Refactored scan-mode motif regression")
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
-    p.add_argument(
+    array_group = p.add_mutually_exclusive_group(required=True)
+    array_group.add_argument(
         "--array",
-        "--kmerPositions",
         dest="array",
-        required=True,
         help="Path to k-mer array file mapping k-mers to genomic regions",
+    )
+    array_group.add_argument(
+        "--kmerPositions", dest="array", default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
     p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
     p.add_argument("--region", required=True, help="chr:start-end (1-based inclusive)")
     p.add_argument(
         "--kmer-size",
-        "--kmer_size",
         dest="kmer_size",
         type=int,
         default=8,
         help="K-mer size (default: 8)",
     )
+    p.add_argument(
+        "--kmer_size", dest="kmer_size", type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS
+    )
 
     p.add_argument(
-        "--mode",
-        choices=["ols", "nb"],
-        default="ols",
-        help="Regression mode (ols or nb)",
+        "--mode", choices=["ols", "nb"], default="ols", help=argparse.SUPPRESS,
     )
 
     grp = p.add_mutually_exclusive_group()
-    grp.add_argument(
-        "--pooled",
-        action="store_true",
-        help="Pool overlapping windows per absolute position and fit one pooled model per position",
-    )
+    grp.add_argument("--pooled", action="store_true", help=argparse.SUPPRESS)
     grp.add_argument(
         "--best-pval", dest="best_pval",
         action="store_true",
         help="Summarize non-pooled scan by minimum p-value; with --holm, use SNV fits and same-window RAND support instead",
     )
-    p.add_argument(
-        "--no-covariates", action="store_true", help="Disable lp and sl covariates"
-    )
+    p.add_argument("--no-covariates", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--reverse", action="store_true", help="Use reverse complement of the sequence"
     )
-    p.add_argument(
-        "--raw-lp",
-        action="store_true",
-        help="Use raw lp in [0,1] (no folding to [0,0.5])",
-    )
+    p.add_argument("--raw-lp", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--seed", type=int, default=0, help="Seed for max-probes subsampling (default: 0); RAND background retains its existing deterministic sampling.")
     p.add_argument(
         "--max-probes", type=int, default=None, dest="max_probes",
@@ -328,8 +319,7 @@ def main(argv=None) -> int:
     )
     p.add_argument("--rand-n", type=int, default=500,
                    help="RAND background size for --holm (default: 500)")
-    p.add_argument("--no-rand", action="store_true",
-                   help="Disable RAND fits in --holm mode")
+    p.add_argument("--no-rand", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--diagnostics", action="store_true",
                    help="Append SNV diagnostics in --best-pval --holm mode")
     args = p.parse_args(argv)

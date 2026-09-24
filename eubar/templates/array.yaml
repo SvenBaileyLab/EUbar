@@ -1,0 +1,16 @@
+# EUbar array template
+# Copy this file into your project, edit the paths, then run:
+#   eubar run array.yaml
+# Relative paths are resolved relative to this YAML file.
+
+task: array
+
+inputs:
+  bed: data/GM12878_DNase.bed
+  genome: reference/hg38.fa
+
+parameters:
+  kmer_size: 8
+
+output:
+  file: results/GM12878_array_8mer.txt

@@ -531,12 +531,15 @@ def main(argv=None) -> int:
     group = p.add_mutually_exclusive_group(required=True)
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
     p.add_argument(
-        "--array", "--kmerPositions", dest="array", required=False,
+        "--array", dest="array", required=False,
         help=(
             "Path to k-mer array file mapping k-mers to genomic regions. Required "
             "for normal contiguous mode; masked mode builds its probe matcher from "
             "the intensity-region coordinates and reference genome."
         ),
+    )
+    p.add_argument(
+        "--kmerPositions", dest="array", default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
     p.add_argument("--genome", required=True, help="Path to reference genome in FASTA format")
     group.add_argument("--snv-list", help="Comma-separated list of SNVs in chr:pos:ref>alt format")
@@ -545,8 +548,11 @@ def main(argv=None) -> int:
         help="Optional file with SNVs, one per line in chr:pos:ref>alt format",
     )
     p.add_argument(
-        "--kmer-size", "--kmer_size", dest="kmer_size", type=int, default=8,
+        "--kmer-size", dest="kmer_size", type=int, default=8,
         help="K-mer size for contiguous mode (default: 8). With --mask, mask span is used instead.",
+    )
+    p.add_argument(
+        "--kmer_size", dest="kmer_size", type=int, default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
     p.add_argument(
         "--mask", type=str, default=None,
@@ -561,8 +567,7 @@ def main(argv=None) -> int:
         help="Number of random probes to use for RAND regression (default: 500)",
     )
     p.add_argument(
-        "--no-rand", action="store_true",
-        help="Skip RAND regression and only output AFF (still prints the motif-effect table)",
+        "--no-rand", action="store_true", help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--best-pval", action="store_true", dest="best_pval",
@@ -589,15 +594,14 @@ def main(argv=None) -> int:
             "to the --best-pval output. Requires --best-pval."
         ),
     )
+    # Legacy/diagnostic model switches are retained internally for reproducibility
+    # but are intentionally hidden from the normal public CLI. OLS + folded lp +
+    # covariates remain the supported defaults.
     p.add_argument(
-        "--mode", choices=["nb", "ols"], default="ols",
-        help="Regression type: negative binomial ('nb') or ordinary least squares ('ols')",
+        "--mode", choices=["nb", "ols"], default="ols", help=argparse.SUPPRESS,
     )
-    p.add_argument("--no-covariates", action="store_true", help="Disable lp and sl covariates")
-    p.add_argument(
-        "--raw-lp", action="store_true",
-        help="Use raw lp in [0,1] (no folding to [0,0.5])",
-    )
+    p.add_argument("--no-covariates", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--raw-lp", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--seed", type=int, default=0,
         help="Seed for max-probes subsampling (default: 0); RAND retains deterministic per-SNV sampling.",
@@ -613,7 +617,7 @@ def main(argv=None) -> int:
             "uses one BLAS thread by default to avoid oversubscription."
         ),
     )
-    p.add_argument("--debug", action="store_true", help="Print additional debugging information")
+    p.add_argument("--debug", action="store_true", help=argparse.SUPPRESS)
     args = p.parse_args(argv)
 
     if args.diagnostics and not args.best_pval:
@@ -625,7 +629,7 @@ def main(argv=None) -> int:
     if args.rand_n < 1 and not args.no_rand:
         p.error("--rand-n must be >= 1 unless --no-rand is used")
     if args.mask is None and not args.array:
-        p.error("--array/--kmerPositions is required unless --mask is supplied")
+        p.error("--array is required unless --mask is supplied")
 
     mask_obj = None
     if args.mask is not None:
@@ -652,9 +656,8 @@ def main(argv=None) -> int:
         print(
             "[WARNING] Intensity values appear to be non-negative (min="
             f"{min(_vals):.3f}). EUbar expects resid_log intensities "
-            "(centered near 0, with negative values). If you used "
-            "'--resid-output intensity_like' when generating intensities, "
-            "please regenerate with '--resid-output resid_log'.",
+            "(centered near 0, with negative values). Please regenerate the "
+            "intensity file using the current default residualized output.",
             file=sys.stderr,
         )
 
@@ -708,7 +711,7 @@ def main(argv=None) -> int:
         )
         if args.array:
             print(
-                "[MASK] note: --array/--kmerPositions is not used for masked matching; "
+                "[MASK] note: --array is not used for masked matching; "
                 "the matcher is built from intensity-region coordinates + genome.",
                 file=sys.stderr,
             )

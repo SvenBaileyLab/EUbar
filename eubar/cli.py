@@ -22,7 +22,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
     ),
     "scan": ("scan", "Scan a genomic region for motif effects via regression"),
     "snv": ("snv", "Run SNV-anchored motif regression across a list of variants"),
+    "calibrate": ("calibrate", "Calibrate analysis parameters from stability and representation"),
     "motifs": ("motifs", "Seed-and-wobble motif discovery with extension"),
+    "run": ("run", "Run one or more EUbar YAML configuration files"),
+    "template": ("template", "Print or copy a commented YAML template"),
 }
 
 
@@ -44,7 +47,7 @@ def _print_help() -> None:
         lines.append(f"    {cmd.ljust(pad)}  {desc}")
 
     lines.append("  Analysis")
-    for cmd in ("scan", "snv"):
+    for cmd in ("scan", "snv", "calibrate"):
         _, desc = COMMANDS[cmd]
         lines.append(f"    {cmd.ljust(pad)}  {desc}")
 
@@ -52,13 +55,21 @@ def _print_help() -> None:
     _, desc = COMMANDS["motifs"]
     lines.append(f"    {'motifs'.ljust(pad)}  {desc}")
 
+    lines.append("  Workflow")
+    for cmd in ("run", "template"):
+        _, desc = COMMANDS[cmd]
+        lines.append(f"    {cmd.ljust(pad)}  {desc}")
+
     lines.append("")
     lines.append("Examples:")
     lines.append("  eubar array --help")
     lines.append("  eubar intensities --help")
     lines.append("  eubar scan --help")
     lines.append("  eubar snv --help")
+    lines.append("  eubar calibrate --help")
     lines.append("  eubar motifs --help")
+    lines.append("  eubar run snv.yaml")
+    lines.append("  eubar template snv --output snv.yaml")
     lines.append("")
     sys.stderr.write("\n".join(lines) + "\n")
 

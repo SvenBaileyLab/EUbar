@@ -1,0 +1,28 @@
+# EUbar SNV template
+#   eubar run snv.yaml
+# Override one value without editing the YAML:
+#   eubar run snv.yaml --jobs 8
+
+task: snv
+
+inputs:
+  intensities: results/TF.int
+  # Required for ordinary contiguous mode. May be omitted when a mask is used.
+  array: results/GM12878_array_8mer.txt
+  genome: reference/hg38.fa
+  variants: data/variants.txt
+
+parameters:
+  kmer_size: 8
+  # For explicitly masked analysis, uncomment and quote the mask:
+  # mask: "11111000011111"
+  rand_n: 500
+  best_pval: true
+  holm: true
+  diagnostics: false
+  seed: 0
+  # max_probes: 1250
+  jobs: 4
+
+output:
+  stdout: results/TF_snv.tsv

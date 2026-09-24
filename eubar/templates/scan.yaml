@@ -1,0 +1,24 @@
+# EUbar regional scan template
+#   eubar run scan.yaml
+
+task: scan
+
+inputs:
+  intensities: results/TF.int
+  array: results/GM12878_array_8mer.txt
+  genome: reference/hg38.fa
+  region: chr1:100000-100100
+
+parameters:
+  kmer_size: 8
+  best_pval: false
+  reverse: false
+  seed: 0
+  # max_probes: 1250
+  # holm: true
+  # rand_n: 500
+  # diagnostics: true
+  # save_figure: results/scan.png
+
+output:
+  stdout: results/scan.tsv

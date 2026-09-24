@@ -1,0 +1,19 @@
+# EUbar intensities template
+#   eubar run intensities.yaml
+# Advanced residualization controls are intentionally omitted from this template.
+
+task: intensities
+
+inputs:
+  bed: data/GM12878_DNase.bed
+  signal: data/TF_signal.bigWig
+  genome_fasta: reference/hg38.fa
+  # genome_size_file: reference/hg38.chrom.sizes
+
+parameters:
+  summary: max
+  window_bp: 100
+  no_residualize: false
+
+output:
+  file: results/TF.int

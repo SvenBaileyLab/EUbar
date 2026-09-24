@@ -84,7 +84,6 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--genome", required=True, help="Reference genome FASTA")
     parser.add_argument(
-        "--kmer_size",
         "--kmer-size",
         dest="kmer_size",
         type=int,
@@ -92,7 +91,16 @@ def main(argv=None) -> int:
         help="k-mer size (default: 8)",
     )
     parser.add_argument(
-        "--output", "--out", dest="output", required=True, help="Output array file"
+        "--kmer_size",
+        dest="kmer_size",
+        type=int,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
+    output_group = parser.add_mutually_exclusive_group(required=True)
+    output_group.add_argument("--output", dest="output", help="Output array file")
+    output_group.add_argument(
+        "--out", dest="output", default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
 
     args = parser.parse_args(argv)

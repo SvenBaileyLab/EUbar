@@ -1,0 +1,29 @@
+# EUbar mask calibration / diagnostic template
+# Diagnostic only: do not interpret the numerical winner as automatic motif-architecture discovery.
+# Advanced calibration thresholds remain available in YAML but are omitted here.
+#   eubar run calibrate_mask.yaml
+
+task: calibrate_mask
+
+inputs:
+  intensities: results/TF.int
+  genome: reference/hg38.fa
+
+parameters:
+  masks:
+    - "1111111111"
+    - "1111100011111"
+    - "11111000011111"
+    - "111110000011111"
+    - "1111100000011111"
+  random_controls: 20
+  stability_probes: 100
+  n_families: 500
+  repeats: 50
+  seed: 1
+  min_probes: 50
+  plot: true
+  quiet: false
+
+output:
+  prefix: results/TF_mask_calibration

@@ -580,56 +580,45 @@ def main(argv=None) -> int:
         default=None,
         help="Optional genome chrom sizes file for bedtools sort (-g)",
     )
-    parser.add_argument("--keep-temp", action="store_true", dest="keep_temp", help="Keep temporary files")
+    parser.add_argument(
+        "--keep-temp", action="store_true", dest="keep_temp",
+        help=argparse.SUPPRESS,
+    )
 
-    # parser.add_argument(
-    #     "--residualize",
-    #     action="store_true",
-    #     help=(
-    #         "If set, fit a simple background model and output residualized intensities. "
-    #         "Model: log1p(signal) ~ 1 + GC + length (+ optional log1p(open) if available). "
-    #         "Requires --genome-fasta. Coefficients are printed to stdout."
-    #     ),
-    # )
-    
     parser.add_argument(
         "--no-residualize",
         action="store_true",
         help=(
-            "Residualize: fit a simple background model and output residualized intensities. "
-            "Model: log1p(signal) ~ 1 + GC + length (+ optional log1p(open) if available). "
-            "Requires --genome-fasta. Coefficients are printed to stdout. " 
-            "Skip residualization and output raw extracted signal instead."
+            "Skip residualization and output raw extracted signal. By default EUbar "
+            "outputs residualized log1p(signal) after adjusting for GC."
         ),
     )
     
     parser.add_argument(
         "--genome-fasta",
         default=None,
-        help="Genome FASTA (required when --residualize is set).",
+        help="Genome FASTA (required unless --no-residualize is used).",
     )
 
-    # Residualization options (only used when --residualize is set)
+    # Advanced residualization options (used only when residualization is enabled)
+    # Advanced residualization controls are intentionally retained for
+    # reproducibility/development, but hidden from the normal public CLI.
     parser.add_argument(
         "--resid-use-length",
         action="store_true",
-        help="Include region length as a covariate during residualization (default: off).",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--resid-open",
         default="off",
         choices=("auto", "off", "force"),
-        help="Include openness covariate from --bed during residualization: auto/off/force. "
-        "Forced to 'off' unless --resid-use-length is set.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--resid-output",
         default="resid_log",
         choices=("resid_log", "log_corrected", "intensity_like"),
-        help="Residualization output scale: "
-        "resid_log (raw residuals in log space), "
-        "log_corrected (recentered log scale), "
-        "intensity_like (nonnegative intensity scale).",
+        help=argparse.SUPPRESS,
     )
 
     parser.add_argument(

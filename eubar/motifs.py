@@ -6,7 +6,7 @@ import os
 import sys
 from dataclasses import dataclass
 from itertools import combinations
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -16,6 +16,9 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+from .core.masking import SequenceMask, _signature_codes
+from .core.sequence import _open_fasta
 
 try:
     import logomaker
@@ -225,6 +228,371 @@ def build_kmer_to_probe_idx(
                 s.add(i)
 
     return {k: np.fromiter(sorted(v), dtype=int) for k, v in tmp.items() if v}
+
+
+def _mask_code_to_bases(code: int, n_bases: int) -> str:
+    """Decode a 2-bit masked-signature code back to A/C/G/T bases."""
+    chars = ["A"] * int(n_bases)
+    x = int(code)
+    for i in range(int(n_bases) - 1, -1, -1):
+        chars[i] = BASES[x & 3]
+        x >>= 2
+    return "".join(chars)
+
+
+def _mask_pattern_from_code(mask: SequenceMask, code: int) -> str:
+    """Render a masked signature as a full-span pattern using '.' for spacers."""
+    informative = _mask_code_to_bases(code, mask.n_informative)
+    out = ["."] * mask.span
+    for base, pos in zip(informative, mask.informative):
+        out[int(pos)] = base
+    return "".join(out)
+
+
+def _mask_seed_to_code(seed: str, mask: SequenceMask) -> int:
+    """Parse a forced masked seed into a signature code.
+
+    Accepts either:
+      * a full-span string, e.g. ``TTGGC....GCCAA`` for a 14-bp mask, or
+      * only the informative bases, e.g. ``TTGGCGCCAA`` for a 10-one mask.
+
+    Characters at ignored mask positions are not used. Informative positions
+    must contain A/C/G/T.
+    """
+    raw = str(seed).strip().upper()
+    if len(raw) == mask.n_informative:
+        informative = raw
+    elif len(raw) == mask.span:
+        informative = "".join(raw[int(pos)] for pos in mask.informative)
+    else:
+        raise ValueError(
+            f"masked --seed must have length {mask.n_informative} (informative only) "
+            f"or {mask.span} (full mask span); got {len(raw)}"
+        )
+    if any(base not in BASES for base in informative):
+        raise ValueError("masked --seed must use A/C/G/T at every informative mask position")
+    code = 0
+    base_to_code = {b: i for i, b in enumerate(BASES)}
+    for base in informative:
+        code = (code << 2) | base_to_code[base]
+    return int(code)
+
+
+def _region_coords(region: str) -> Tuple[str, int, int]:
+    chrom, coords = str(region).split(":", 1)
+    start_s, end_s = coords.split("-", 1)
+    return chrom, int(start_s), int(end_s)
+
+
+def collect_mask_seed_candidates(
+    *,
+    mask: SequenceMask,
+    ranks: ProbeRanks,
+    genome_fasta: str,
+    top_probe_count: int,
+    max_candidates: int,
+) -> List[int]:
+    """Collect masked signature candidates from the highest-intensity probes.
+
+    This is deliberately a *candidate-generation* step, not the final score.
+    Candidate signatures are subsequently rescored against the entire probe
+    universe with the same rank-based E-score used by ordinary ``eubar motifs``.
+    """
+    n_top = min(max(1, int(top_probe_count)), len(ranks.regions))
+    max_candidates = max(1, int(max_candidates))
+    fasta = _open_fasta(genome_fasta)
+    counts: Counter = Counter()
+
+    for probe_i in ranks.order[:n_top]:
+        region = ranks.regions[int(probe_i)]
+        try:
+            chrom, start0, end0 = _region_coords(region)
+            seq = fasta[chrom][start0:end0].seq.upper()
+        except Exception:
+            continue
+        if len(seq) < mask.span:
+            continue
+        f_codes, r_codes, valid_f, valid_r = _signature_codes(seq, mask)
+        # Count presence per probe, rather than repeated windows within one probe.
+        local = set()
+        if len(f_codes):
+            local.update(int(x) for x in f_codes[valid_f])
+            local.update(int(x) for x in r_codes[valid_r])
+        counts.update(local)
+
+    if not counts:
+        return []
+    return [int(code) for code, _ in counts.most_common(max_candidates)]
+
+
+def _hits_to_probe_idx(
+    hits: Dict[str, object], region_to_i: Dict[str, int]
+) -> np.ndarray:
+    vals = sorted(
+        {
+            int(region_to_i[r])
+            for r in hits.keys()
+            if r in region_to_i
+        }
+    )
+    return np.asarray(vals, dtype=int)
+
+
+def scan_mask_codes_for_motifs(
+    *,
+    mask: SequenceMask,
+    target_codes: Sequence[int],
+    probe_regions: Sequence[str],
+    genome_fasta: str,
+) -> Tuple[Dict[int, Dict[str, int]], Dict[str, int]]:
+    """Scan masked signatures for motif discovery.
+
+    A signature is retained when it occurs at one unique *physical window* in a
+    probe region. Forward and reverse matches at the same offset count as the
+    same occurrence. This matters for palindromic/bipartite motifs such as NFIC:
+    a self-reverse-complement signature should not be discarded merely because
+    both strand orientations describe the same genomic window.
+    """
+    targets = {int(x) for x in target_codes}
+    hits: Dict[int, Dict[str, int]] = {code: {} for code in targets}
+    ambiguous: Dict[int, set] = {code: set() for code in targets}
+    fasta = _open_fasta(genome_fasta)
+    n_valid_regions = 0
+    n_windows = 0
+
+    for region in probe_regions:
+        try:
+            chrom, start0, end0 = _region_coords(region)
+            seq = fasta[chrom][start0:end0].seq.upper()
+        except Exception:
+            continue
+        if len(seq) < mask.span:
+            continue
+        n_valid_regions += 1
+        f_codes, r_codes, valid_f, valid_r = _signature_codes(seq, mask)
+        n = len(f_codes)
+        n_windows += int(n)
+        local: Dict[int, set] = defaultdict(set)
+        for off0 in range(n):
+            if bool(valid_f[off0]):
+                code = int(f_codes[off0])
+                if code in targets:
+                    local[code].add(int(off0))
+            if bool(valid_r[off0]):
+                code = int(r_codes[off0])
+                if code in targets:
+                    local[code].add(int(off0))
+        for code, offsets in local.items():
+            if len(offsets) == 1:
+                if region not in ambiguous[code]:
+                    hits[code][region] = next(iter(offsets)) + 1
+            else:
+                ambiguous[code].add(region)
+                hits[code].pop(region, None)
+
+    return hits, {
+        "n_probe_regions": len(probe_regions),
+        "n_valid_regions": n_valid_regions,
+        "n_windows": n_windows,
+        "n_target_codes": len(targets),
+        "n_target_region_hits": sum(len(v) for v in hits.values()),
+        "n_ambiguous_region_hits": sum(len(v) for v in ambiguous.values()),
+    }
+
+
+def choose_mask_seed(
+    *,
+    mask: SequenceMask,
+    candidate_codes: Sequence[int],
+    target_hits: Dict[int, Dict[str, object]],
+    ranks: ProbeRanks,
+    min_F: int,
+) -> pd.DataFrame:
+    """Score masked signature candidates and return them best-first."""
+    rows: List[dict] = []
+    N_total = len(ranks.scores)
+    for code in candidate_codes:
+        idx = _hits_to_probe_idx(target_hits.get(int(code), {}), ranks.region_to_i)
+        F = int(len(idx))
+        if F < int(min_F):
+            continue
+        E = escore_auc_minus_half_all_bg(idx, ranks.i_to_rank, N_total)
+        rows.append(
+            {
+                "kmer": _mask_pattern_from_code(mask, int(code)),
+                "code": int(code),
+                "E": float(E),
+                "F": F,
+                "gaps": int(mask.span - mask.n_informative),
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df.sort_values(["E", "F", "kmer"], ascending=[False, False, True], inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    return df
+
+
+def _variant_code_for_informative_base(
+    seed_bases: str, informative_index: int, base: str
+) -> int:
+    chars = list(seed_bases)
+    chars[int(informative_index)] = str(base)
+    base_to_code = {b: i for i, b in enumerate(BASES)}
+    code = 0
+    for ch in chars:
+        code = (code << 2) | base_to_code[ch]
+    return int(code)
+
+
+def ppm_from_mask_seed_wobble(
+    *,
+    mask: SequenceMask,
+    seed_code: int,
+    variant_hits: Dict[int, Dict[str, object]],
+    ranks: ProbeRanks,
+    min_per_base: int,
+    beta: float,
+    min_support: int = 1,
+    pseudocount: float = 0.0,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Build a full-span PPM by wobbling only informative mask positions.
+
+    Ignored spacer positions are represented as uniform 0.25 probabilities,
+    which gives zero information content in the bits logo.
+    """
+    seed_bases = _mask_code_to_bases(seed_code, mask.n_informative)
+    reduced_rows: List[Dict] = []
+    ppm_rows: List[pd.Series] = []
+    informative_to_rank = {int(pos): i for i, pos in enumerate(mask.informative)}
+
+    for pos in range(mask.span):
+        if pos not in informative_to_rank:
+            ppm_rows.append(
+                pd.Series({b: 0.25 for b in BASES}, name=pos, dtype=float)
+            )
+            for base in BASES:
+                reduced_rows.append(
+                    {
+                        "pos": pos,
+                        "base": base,
+                        "variant": mask.pattern,
+                        "E_reduced": 0.0,
+                        "p": np.nan,
+                        "F": 0,
+                        "B": 0,
+                        "masked_spacer": True,
+                    }
+                )
+            continue
+
+        j = int(informative_to_rank[pos])
+        variants: Dict[str, np.ndarray] = {}
+        codes: Dict[str, int] = {}
+        for base in BASES:
+            code = _variant_code_for_informative_base(seed_bases, j, base)
+            codes[base] = code
+            variants[base] = _hits_to_probe_idx(
+                variant_hits.get(code, {}), ranks.region_to_i
+            )
+
+        _, clean_sets = reduced_test_four_variants(
+            variants, min_per_base=int(min_per_base)
+        )
+        support = {b: int(len(clean_sets[b])) for b in BASES}
+        good_bases = [b for b in BASES if support[b] >= int(min_per_base)]
+
+        if len(good_bases) < 2:
+            for base in BASES:
+                reduced_rows.append(
+                    {
+                        "pos": pos,
+                        "base": base,
+                        "variant": _mask_pattern_from_code(mask, codes[base]),
+                        "E_reduced": np.nan,
+                        "p": np.nan,
+                        "F": support[base],
+                        "B": 0,
+                        "masked_spacer": False,
+                    }
+                )
+            supported = [b for b in BASES if support[b] >= int(min_support)]
+            if len(supported) == 1:
+                probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+                probs[supported[0]] = 1.0
+            else:
+                seed_base = seed_bases[j]
+                probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+                probs[seed_base] = 1.0
+            if pseudocount > 0:
+                probs = probs + float(pseudocount)
+                probs = probs / float(probs.sum())
+            ppm_rows.append(pd.Series(probs, name=pos))
+            continue
+
+        pos_es: Dict[str, float] = {}
+        for base in BASES:
+            fg = clean_sets[base]
+            if int(len(fg)) < int(min_per_base):
+                pos_es[base] = np.nan
+                reduced_rows.append(
+                    {
+                        "pos": pos,
+                        "base": base,
+                        "variant": _mask_pattern_from_code(mask, codes[base]),
+                        "E_reduced": np.nan,
+                        "p": np.nan,
+                        "F": int(len(fg)),
+                        "B": 0,
+                        "masked_spacer": False,
+                    }
+                )
+                continue
+            bg_parts = [
+                clean_sets[x]
+                for x in BASES
+                if x != base and int(len(clean_sets[x])) > 0
+            ]
+            bg = np.concatenate(bg_parts) if bg_parts else np.array([], dtype=int)
+            E_red, p = reduced_escore_and_p(fg, bg, ranks.i_to_rank)
+            pos_es[base] = E_red
+            reduced_rows.append(
+                {
+                    "pos": pos,
+                    "base": base,
+                    "variant": _mask_pattern_from_code(mask, codes[base]),
+                    "E_reduced": E_red,
+                    "p": p,
+                    "F": int(len(fg)),
+                    "B": int(len(bg)),
+                    "masked_spacer": False,
+                }
+            )
+
+        es_series = pd.Series(pos_es, dtype=float)
+        es_filled = es_series.reindex(BASES).copy()
+        es_filled[~np.isfinite(es_filled)] = -0.5
+        probs = softmax_from_escores(es_filled, beta=float(beta))
+        for base in BASES:
+            if base not in es_series or not np.isfinite(es_series.get(base, np.nan)):
+                probs[base] = 0.0
+        if float(probs.sum()) <= 0:
+            probs = pd.Series({b: 0.0 for b in BASES}, dtype=float)
+            probs[seed_bases[j]] = 1.0
+        else:
+            probs = probs / float(probs.sum())
+        if pseudocount > 0:
+            probs = probs + float(pseudocount)
+            probs = probs / float(probs.sum())
+        ppm_rows.append(pd.Series({b: float(probs[b]) for b in BASES}, name=pos))
+
+    reduced_df = pd.DataFrame(reduced_rows)
+    ppm = pd.DataFrame(ppm_rows)
+    ppm.index = list(range(mask.span))
+    ppm.index.name = "pos"
+    ppm = ppm[list(BASES)]
+    return reduced_df, ppm
 
 
 def escore_auc_minus_half_all_bg(
@@ -984,9 +1352,9 @@ def plot_logo(
             fontsize=18,
             fontfamily="Carlito",
         )
-        ax.set_yticklabels(
-            [f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito"
-        )
+        ax.tick_params(axis="y", labelsize=18)
+        for label in ax.get_yticklabels():
+            label.set_fontfamily("Carlito")
         ax.set_ylim(0, y_max)
     else:
         # fallback: draw a simple sequence logo using stacked letters
@@ -1032,9 +1400,9 @@ def plot_logo(
         )
         ax.set_ylabel(y_label, fontsize=18, fontfamily="Carlito")
         ax.set_xlabel("pos", fontsize=18, fontfamily="Carlito")
-        ax.set_yticklabels(
-            [f"{y:g}" for y in ax.get_yticks()], fontsize=18, fontfamily="Carlito"
-        )
+        ax.tick_params(axis="y", labelsize=18)
+        for label in ax.get_yticklabels():
+            label.set_fontfamily("Carlito")
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
 
@@ -1242,6 +1610,213 @@ def plot_escore_histogram(es_df: pd.DataFrame, out_png: str, title: str) -> None
     plt.close(fig)
 
 
+def run_masked_motifs(args, intensities: Dict[str, float], ranks: ProbeRanks) -> int:
+    """Masked motif discovery path.
+
+    The mask defines the motif span and which positions are informative. Seed
+    discovery is performed on masked signatures sampled from the highest-
+    intensity probes, then rescored against the full probe universe. Wobble is
+    restricted to informative positions; spacer positions remain uniform in the
+    PPM and therefore contribute zero information in the bits logo.
+    """
+    mask = SequenceMask.parse(args.mask)
+    if not args.genome:
+        sys.stderr.write("[error] --genome is required when --mask is used.\n")
+        return 2
+
+    probe_regions = tuple(ranks.regions)
+    if not probe_regions:
+        sys.stderr.write("[error] Intensity file contains no probe regions.\n")
+        return 2
+
+    sys.stderr.write(
+        f"[MASK-MOTIF] mask={mask.pattern} span={mask.span} "
+        f"informative={mask.n_informative}\n"
+    )
+    if args.array:
+        sys.stderr.write(
+            "[MASK-MOTIF] note: --array is not used in masked motif mode; "
+            "probe regions come from the intensity file and sequence comes from --genome.\n"
+        )
+
+    if args.seed is None:
+        candidate_codes = collect_mask_seed_candidates(
+            mask=mask,
+            ranks=ranks,
+            genome_fasta=args.genome,
+            top_probe_count=int(args.mask_candidate_probes),
+            max_candidates=int(args.mask_max_candidates),
+        )
+        if not candidate_codes:
+            sys.stderr.write("[error] No masked seed candidates could be generated.\n")
+            return 2
+        sys.stderr.write(
+            f"[MASK-MOTIF] generated {len(candidate_codes):,} candidate signatures "
+            f"from top {min(int(args.mask_candidate_probes), len(ranks.regions)):,} probes; "
+            "scanning full probe universe\n"
+        )
+        candidate_hits, scan_stats = scan_mask_codes_for_motifs(
+            mask=mask,
+            target_codes=candidate_codes,
+            probe_regions=probe_regions,
+            genome_fasta=args.genome,
+        )
+        sys.stderr.write(
+            f"[MASK-MOTIF] indexed {scan_stats['n_windows']:,} probe windows; "
+            f"candidate hits={scan_stats['n_target_region_hits']:,}\n"
+        )
+        es_df = choose_mask_seed(
+            mask=mask,
+            candidate_codes=candidate_codes,
+            target_hits=candidate_hits,
+            ranks=ranks,
+            min_F=int(args.min_F),
+        )
+        if es_df.empty:
+            sys.stderr.write("[error] No masked candidates passed the --min-F filter.\n")
+            return 2
+        seed_code = int(es_df.loc[0, "code"])
+        seed_hits = candidate_hits.get(seed_code, {})
+        top_path = os.path.join(args.outdir, f"{args.prefix}.top_escores.tsv")
+        es_df.head(int(args.top_n_report)).to_csv(top_path, sep="\t", index=False)
+        sys.stderr.write(f"[ok] Wrote top E-score table: {top_path}\n")
+    else:
+        try:
+            seed_code = _mask_seed_to_code(args.seed, mask)
+        except ValueError as exc:
+            sys.stderr.write(f"[error] {exc}\n")
+            return 2
+        candidate_hits, scan_stats = scan_mask_codes_for_motifs(
+            mask=mask,
+            target_codes=[seed_code],
+            probe_regions=probe_regions,
+            genome_fasta=args.genome,
+        )
+        seed_hits = candidate_hits.get(seed_code, {})
+        seed_idx = _hits_to_probe_idx(seed_hits, ranks.region_to_i)
+        F = int(len(seed_idx))
+        E = (
+            escore_auc_minus_half_all_bg(seed_idx, ranks.i_to_rank, len(ranks.scores))
+            if F > 0
+            else np.nan
+        )
+        es_df = pd.DataFrame(
+            [
+                {
+                    "kmer": _mask_pattern_from_code(mask, seed_code),
+                    "code": seed_code,
+                    "E": E,
+                    "F": F,
+                    "gaps": int(mask.span - mask.n_informative),
+                }
+            ]
+        )
+
+    seed = _mask_pattern_from_code(mask, seed_code)
+    sys.stderr.write(f"[seed] {seed}\n")
+
+    seed_bases = _mask_code_to_bases(seed_code, mask.n_informative)
+    wobble_codes = sorted(
+        {
+            _variant_code_for_informative_base(seed_bases, j, base)
+            for j in range(mask.n_informative)
+            for base in BASES
+        }
+    )
+    sys.stderr.write(
+        f"[MASK-MOTIF] wobbling {mask.n_informative} informative positions "
+        f"({len(wobble_codes)} unique signatures); scanning probe universe\n"
+    )
+    wobble_hits, wobble_stats = scan_mask_codes_for_motifs(
+        mask=mask,
+        target_codes=wobble_codes,
+        probe_regions=probe_regions,
+        genome_fasta=args.genome,
+    )
+    sys.stderr.write(
+        f"[MASK-MOTIF] wobble scan indexed {wobble_stats['n_windows']:,} probe windows; "
+        f"target hits={wobble_stats['n_target_region_hits']:,}\n"
+    )
+
+    reduced_df, ppm = ppm_from_mask_seed_wobble(
+        mask=mask,
+        seed_code=seed_code,
+        variant_hits=wobble_hits,
+        ranks=ranks,
+        min_per_base=int(args.min_per_base),
+        beta=float(args.beta),
+        min_support=int(args.min_support),
+        pseudocount=float(args.pseudocount),
+    )
+
+    consensus_chars = []
+    for pos in range(mask.span):
+        if mask.pattern[pos] == "0":
+            consensus_chars.append(".")
+        else:
+            consensus_chars.append(str(ppm.loc[pos, list(BASES)].idxmax()))
+    consensus = "".join(consensus_chars)
+    sys.stderr.write(f"[consensus] {consensus}\n")
+
+    ppm_path = os.path.join(args.outdir, f"{args.prefix}.ppm.tsv")
+    meme_path = os.path.join(args.outdir, f"{args.prefix}.meme")
+    logo_prob_path = os.path.join(args.outdir, f"{args.prefix}.logo_prob.png")
+    logo_bits_path = os.path.join(args.outdir, f"{args.prefix}.logo_bits.png")
+    logo_prob_rc_path = os.path.join(args.outdir, f"{args.prefix}.logo_prob_rc.png")
+    logo_bits_rc_path = os.path.join(args.outdir, f"{args.prefix}.logo_bits_rc.png")
+    seed_curve_path = os.path.join(args.outdir, f"{args.prefix}.seed_enrichment_curve.png")
+    seed_roc_path = os.path.join(args.outdir, f"{args.prefix}.seed_roc.png")
+    seed_hist_path = os.path.join(args.outdir, f"{args.prefix}.seed_escore_hist.png")
+    enrich_bar_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment.png")
+    enrich_bar_rc_path = os.path.join(args.outdir, f"{args.prefix}.reduced_enrichment_rc.png")
+    reduced_path = os.path.join(args.outdir, f"{args.prefix}.reduced.tsv")
+    reduced_full_path = os.path.join(args.outdir, f"{args.prefix}.reduced_full.tsv")
+
+    reduced_full_df = reduced_df.copy()
+    if not reduced_full_df.empty:
+        reduced_full_df["side"] = "core"
+        reduced_full_df["step"] = reduced_full_df["pos"].astype(int)
+        reduced_full_df["gaps_used"] = int(mask.span - mask.n_informative)
+        reduced_full_df.sort_values(["pos", "base"], inplace=True)
+
+    ppm.to_csv(ppm_path, sep="\t")
+    reduced_df.to_csv(reduced_path, sep="\t", index=False)
+    reduced_full_df.to_csv(reduced_full_path, sep="\t", index=False)
+
+    ppm_normal = ppm.reset_index(drop=True)
+    ppm_rc = reverse_complement_ppm(ppm_normal)
+    write_meme(ppm_normal, meme_path, motif_name=consensus)
+    title = f"{consensus} (mask={mask.pattern})"
+    plot_logo(ppm_normal, logo_prob_path, title=title, pretty_logo=bool(args.pretty_logo), mode="prob")
+    plot_logo(ppm_normal, logo_bits_path, title=title, pretty_logo=bool(args.pretty_logo), mode="bits")
+    plot_logo(ppm_rc, logo_prob_rc_path, title=title + " [RC]", pretty_logo=bool(args.pretty_logo), mode="prob")
+    plot_logo(ppm_rc, logo_bits_rc_path, title=title + " [RC]", pretty_logo=bool(args.pretty_logo), mode="bits")
+    plot_enrichment_bars(reduced_full_df, enrich_bar_path, title=None, pretty_logo=bool(args.pretty_logo))
+    plot_enrichment_bars(
+        reverse_complement_reduced_df(reduced_full_df),
+        enrich_bar_rc_path,
+        title=None,
+        pretty_logo=bool(args.pretty_logo),
+    )
+
+    seed_idx = _hits_to_probe_idx(seed_hits, ranks.region_to_i)
+    if seed_idx.size > 0:
+        plot_seed_enrichment_curve(seed, seed_idx, ranks, seed_curve_path)
+        plot_seed_enrichment_roc(seed, seed_idx, ranks, seed_roc_path)
+    plot_escore_histogram(es_df, seed_hist_path, title="Masked seed candidate E-score distribution")
+
+    sys.stderr.write(f"[ok] PPM:   {ppm_path}\n")
+    sys.stderr.write(f"[ok] MEME:  {meme_path}\n")
+    sys.stderr.write(f"[ok] logo:  {logo_prob_path}\n")
+    sys.stderr.write(f"[ok] reduced enrichment plot: {enrich_bar_path}\n")
+    sys.stderr.write(f"[ok] seed curve: {seed_curve_path}\n")
+    sys.stderr.write(f"[ok] seed ROC:   {seed_roc_path}\n")
+    sys.stderr.write(f"[ok] E-score hist: {seed_hist_path}\n")
+    sys.stderr.write(f"[ok] reduced table: {reduced_path}\n")
+    sys.stderr.write(f"[ok] reduced_full: {reduced_full_path}\n")
+    return 0
+
+
 def motif_logscore(kmer: str, ppm: pd.DataFrame, eps: float = 1e-12) -> float:
     """Sum log(prob) under the motif for a k-mer aligned to ppm.
 
@@ -1288,7 +1863,7 @@ def plot_motif_vs_escore(
 
     qc["bin"] = pd.qcut(qc["motif_logscore"], q=q, duplicates="drop")
     trend = (
-        qc.groupby("bin")
+        qc.groupby("bin", observed=False)
         .agg(
             mean_motif=("motif_logscore", "mean"),
             mean_E=("E", "mean"),
@@ -1314,17 +1889,46 @@ def main(argv=None) -> int:
     ap.add_argument("--intensities", required=True, help="Path to probe intensity file")
     ap.add_argument(
         "--array",
-        "--kmers",
         dest="array",
-        required=True,
+        required=False,
+        default=None,
         help="Path to k-mer array file mapping k-mers to genomic regions",
+    )
+    ap.add_argument(
+        "--kmers", dest="array", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+    )
+    ap.add_argument(
+        "--mask",
+        default=None,
+        help=(
+            "Optional explicit 0/1 sequence mask for masked motif discovery, e.g. "
+            "11111000011111. When supplied, the mask defines the motif span and "
+            "--genome is required; the ordinary k-mer seed/extension path is left unchanged."
+        ),
+    )
+    ap.add_argument(
+        "--genome",
+        default=None,
+        help="Genome FASTA used for masked motif discovery (--mask mode)",
+    )
+    ap.add_argument(
+        "--mask-candidate-probes",
+        type=int,
+        default=5000,
+        help=argparse.SUPPRESS,
+    )
+    ap.add_argument(
+        "--mask-max-candidates",
+        type=int,
+        default=10000,
+        help=argparse.SUPPRESS,
     )
     ap.add_argument("--kmer-size", type=int, default=8, help="k-mer size (default: 8)")
     ap.add_argument(
         "--no-combine-revcomp",
         dest="combine_revcomp",
         action="store_false",
-        help="Do NOT combine k-mer and its reverse complement (default: combine).",
+        help=argparse.SUPPRESS,
     )
     ap.set_defaults(combine_revcomp=True)
 
@@ -1332,7 +1936,7 @@ def main(argv=None) -> int:
         "--min-F",
         type=int,
         default=20,
-        help="Minimum probe count (F) to consider a k-mer for seed selection (default: 20)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--max-gaps",
@@ -1344,55 +1948,55 @@ def main(argv=None) -> int:
         "--min-per-base",
         type=int,
         default=20,
-        help="Minimum probe count per base in reduced tests (default: 20)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--min-support",
         type=int,
         default=1,
-        help="Minimum raw support to treat a base as truly supported in fallback logic (default: 1)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--pseudocount",
         type=float,
         default=0.0,
-        help="Optional pseudocount added to each base probability after calling (default: 0.0)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--beta",
         type=float,
         default=10.0,
-        help="Softmax scale for converting E_reduced to probabilities (default: 10)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--auto-max-steps",
         type=int,
         default=20,
-        help="When --extend-left/right is -1, attempt up to this many steps (default: 20)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--extend-left",
         type=int,
         default=-1,
-        help="Flank extension steps to the left. -1=auto until stop (default), 0=off",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--extend-right",
         type=int,
         default=-1,
-        help="Flank extension steps to the right. -1=auto until stop (default), 0=off",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--ic-stop-threshold",
         type=float,
         default=0.20,
-        help="Information-content threshold for flank extension stopping (default: 0.20). If a newly added flank position has IC below this value for N consecutive steps, extension stops.",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--ic-stop-consecutive",
         type=int,
         default=2,
-        help="Number of consecutive low-IC flank positions required to stop extension (default: 2).",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--outdir",
@@ -1413,13 +2017,13 @@ def main(argv=None) -> int:
     ap.add_argument(
         "--seed",
         default=None,
-        help="Force a specific seed k-mer (skip seed search)",
+        help=argparse.SUPPRESS,
     )
     ap.add_argument(
         "--top-n-report",
         type=int,
         default=50,
-        help="Write a TSV of top N kmers by E-score (default: 50)",
+        help=argparse.SUPPRESS,
     )
 
     args = ap.parse_args(argv)
@@ -1441,6 +2045,13 @@ def main(argv=None) -> int:
     # Load data
     intensities = read_intensities(args.intensities)
     ranks = build_probe_ranks(intensities)
+
+    if args.mask is not None:
+        return run_masked_motifs(args, intensities, ranks)
+
+    if not args.array:
+        sys.stderr.write("[error] --array is required unless --mask is supplied.\n")
+        return 2
 
     kmer_positions = read_unique_kmer_positions(args.array)
 

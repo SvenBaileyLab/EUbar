@@ -1,0 +1,22 @@
+# EUbar motif-discovery template
+#   eubar run motifs.yaml
+# Algorithm-tuning controls are available internally but intentionally omitted here.
+
+task: motifs
+
+inputs:
+  intensities: results/TF.int
+  # Ordinary motif mode uses array. Masked motif mode uses genome + parameters.mask.
+  array: results/GM12878_array_8mer.txt
+  # genome: reference/hg38.fa
+
+parameters:
+  kmer_size: 8
+  max_gaps: 3
+  pretty_logo: true
+  # For masked motif mode:
+  # mask: "11111000011111"
+
+output:
+  directory: results/motifs
+  prefix: TF

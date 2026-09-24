@@ -1,0 +1,21 @@
+# EUbar max-probes calibration template
+# Most parameters are optional; advanced recommendation thresholds are intentionally omitted.
+#   eubar run calibrate_max_probes.yaml
+
+task: calibrate_max_probes
+
+inputs:
+  intensities: results/TF.int
+  array: results/GM12878_array_8mer.txt
+
+parameters:
+  n_families: 100
+  repeats: 50
+  caps: [100, 200, 400, 600, 800, 1000, 1250, 1500, 2000, 2500]
+  seed: 1
+  min_probes: 50
+  plot: true
+  quiet: false
+
+output:
+  prefix: results/TF_maxprobe

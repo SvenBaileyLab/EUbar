@@ -1,0 +1,13 @@
+# EUbar pipeline template
+# Each step is an ordinary task YAML. Steps run in order and stop on failure.
+# Paths are relative to this pipeline YAML.
+#   eubar run pipeline.yaml
+
+task: pipeline
+
+steps:
+  - array.yaml
+  - intensities.yaml
+  - calibrate_max_probes.yaml
+  - snv.yaml
+  - motifs.yaml
