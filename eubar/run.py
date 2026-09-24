@@ -9,7 +9,8 @@ from pathlib import Path
 import sys
 from typing import List, Optional, Sequence, Set, Tuple
 
-from eubar.config import ConfigError, build_argv, load_yaml, pipeline_step_paths
+from eubar.config import ConfigError, build_argv, load_yaml, pipeline_step_paths, task_options
+from eubar.task_config import TaskConfigError
 
 
 def _quote_argv(command: str, argv: Sequence[str]) -> str:
@@ -20,19 +21,17 @@ def _quote_argv(command: str, argv: Sequence[str]) -> str:
         return " ".join(["eubar", command] + [str(x) for x in argv])
 
 
-def _dispatch(command: str, argv: Sequence[str], stdout_path: Optional[str]) -> int:
-    mod = importlib.import_module(f"eubar.{command}")
-    tool_main = getattr(mod, "main", None)
-    if not callable(tool_main):
-        raise ConfigError(f"tool module has no main(): eubar.{command}")
+def _dispatch(task, options, stdout_path: Optional[str]) -> int:
+    from eubar.api import task_runner
+    run_task = task_runner(task)
 
     if stdout_path is None:
-        return int(tool_main(list(argv)) or 0)
+        return int(run_task(options) or 0)
 
     out = Path(stdout_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh, redirect_stdout(fh):
-        rc = tool_main(list(argv))
+        rc = run_task(options)
     print(f"[eubar run] stdout written to: {out}", file=sys.stderr)
     return int(rc or 0)
 
@@ -71,20 +70,30 @@ def _run_config(
                 return rc
         return 0
 
-    command, argv, stdout_path = build_argv(cfg)
-    if overrides:
-        argv = list(argv) + list(overrides)
-
     if print_argv or dry_run:
+        command, argv, stdout_path = build_argv(cfg)
+        argv = list(argv) + list(overrides)
         print(_quote_argv(command, argv))
         if stdout_path:
             print(f"  > {stdout_path}")
     if dry_run:
         return 0
 
+    override_values = {}
+    if overrides:
+        from eubar.cli_options import parse_overrides
+        mod = importlib.import_module(f"eubar.{cfg.spec.command}")
+        override_values = parse_overrides(mod.build_parser(), overrides)
+    options, stdout_path = task_options(cfg, override_values)
+
     print(f"[eubar run] config: {source}", file=sys.stderr)
     print(f"[eubar run] task: {cfg.task}", file=sys.stderr)
-    return _dispatch(command, argv, stdout_path)
+    try:
+        return _dispatch(cfg.task, options, stdout_path)
+    except ValueError as exc:
+        if cfg.task.startswith("calibrate_"):
+            raise ConfigError(str(exc)) from exc
+        raise
 
 
 def _parse_runner_args(argv: Sequence[str]) -> Tuple[List[str], List[str], bool, bool]:
@@ -150,7 +159,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if rc != 0:
                 return rc
         return 0
-    except ConfigError as exc:
+    except (ConfigError, TaskConfigError) as exc:
         print(f"[eubar run] error: {exc}", file=sys.stderr)
         return 2
 

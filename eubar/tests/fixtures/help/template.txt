@@ -1,0 +1,13 @@
+usage: __main__.py [-h] [--output OUTPUT] [--list]
+                   [{array,intensities,scan,snv,motifs,calibrate_max_probes,calibrate_mask,pipeline}]
+
+Print or copy a commented EUbar YAML template.
+
+positional arguments:
+  {array,intensities,scan,snv,motifs,calibrate_max_probes,calibrate_mask,pipeline}
+
+options:
+  -h, --help            show this help message and exit
+  --output OUTPUT, -o OUTPUT
+                        Write template to this file instead of stdout
+  --list                List available templates

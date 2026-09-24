@@ -1,0 +1,30 @@
+usage: __main__.py [-h] --bed BED --signal SIGNAL --output OUTPUT
+                   [--genome-size-file GENOME_SIZE_FILE] [--no-residualize]
+                   [--genome-fasta GENOME_FASTA]
+                   [--summary {max,mean,center_max,center_mean}]
+                   [--window-bp WINDOW_BP]
+
+Extract ChIP signal over DNase/ATAC regions from either BigWig or BedGraph.
+Outputs: region_key<TAB>signal, where region_key is chrom:start-end of the
+ORIGINAL regions.
+
+options:
+  -h, --help            show this help message and exit
+  --bed BED             Path to DNase-seq/ATAC-seq BED file (-a)
+  --signal SIGNAL       Path to ChIP-seq BedGraph OR BigWig file (-b)
+  --output OUTPUT       Output file path
+  --genome-size-file GENOME_SIZE_FILE
+                        Optional genome chrom sizes file for bedtools sort
+                        (-g)
+  --no-residualize      Skip residualization and output raw extracted signal.
+                        By default EUbar outputs residualized log1p(signal)
+                        after adjusting for GC.
+  --genome-fasta GENOME_FASTA
+                        Genome FASTA (required unless --no-residualize is
+                        used).
+  --summary {max,mean,center_max,center_mean}
+                        How to summarize signal: max/mean over full interval,
+                        or center_max/center_mean over a fixed window.
+  --window-bp WINDOW_BP
+                        Window size (bp) for center_* summaries (default:
+                        100). Ignored for max/mean.

@@ -1,74 +1,123 @@
-# Scan Analysis
+# Scan analysis
 
-This tutorial demonstrates how to use EUbar to scan a genomic region and evaluate the predicted effect of every possible single-nucleotide change on TF binding. We scan the TERT promoter region (chr5:1,295,105-1,295,140, hg38) for GABPA binding effects — the same analysis used in the EUbar manuscript to localise the two recurrent cancer driver mutations.
+`eubar scan` evaluates substitutions across a genomic interval. Use the inputs
+from [Data preparation](01_data_prep.md). Region coordinates are **1-based,
+inclusive**: `chr5:1295105-1295140` contains 36 bases.
 
-This tutorial assumes you have already completed [Data Preparation](01_data_prep.md) and have the following files:
-
-``` text
-results/MCF7_DNase_8mer.txt
-results/GABPA_MCF7_intensities.tsv
-```
-
----
-
-## 1. Run the scan
-
-Use `scan` with a genomic region in `chr:start-end` format. Results are written to stdout — redirect to a file for downstream use.
+## Scan all windows
 
 ```bash
-eubar scan   --intensities results/GABPA_MCF7_intensities.tsv   --array results/MCF7_DNase_8mer.txt   --genome data/hg38.fa   --region "chr5:1295105-1295140"   --mode ols   --save-figure results/tert_scan.png   > results/tert_scan.tsv
+eubar scan \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --array results/MCF7_DNase_8mer.txt \
+  --genome data/hg38.fa \
+  --region "chr5:1295105-1295140" \
+  --save-figure results/tert_scan.png \
+  > results/tert_scan.tsv
 ```
 
-The `--save-figure` flag saves a plot of the scan results. `--mode ols` uses ordinary least squares regression, which is recommended for GC-corrected residual intensities.
+The ordinary scan fits AFF for each tested base in each k-mer window contained
+within the requested interval. Boundary positions have fewer windows than
+interior positions. OLS is the default. Reference-allele rows have missing
+coefficients because REF is the comparison baseline.
 
-The output is a TSV written to stdout with one row per overlapping k-mer window per allele across the scanned interval. Each position in the region is evaluated in multiple overlapping windows, capturing how each possible change interacts with its local sequence context.
+| Column | Meaning |
+| --- | --- |
+| `wildcard_kmer` | Sequence with `.` at the tested base |
+| `filled_kmer` | Sequence with the reported allele substituted |
+| `window_index` | Zero-based window start in the scanned sequence |
+| `snp_index` | Zero-based tested position within that window |
+| `type` | `AFF` in ordinary scan output |
+| `allele` | Reported base |
+| `coef` | Effect relative to the reference allele |
+| `pval` | P-value for that effect |
+| `absolute_pos` | Zero-based offset in the scanned sequence, **not** a genomic coordinate |
+| `method` | Fit method or missing-reference marker |
 
----
+On the forward strand, genomic position is `region_start + absolute_pos`.
+With `--reverse`, the sequence is reverse-complemented: genomic position is
+`region_end - absolute_pos`, and alleles are reported on that strand.
 
-## 2. Get a best-window summary per position
+## Ordinary best-window summary
 
-For a cleaner view of the scan — one result per genomic position — use `--best-pval`. This selects the window with the strongest predicted effect at each position and produces a figure that is easier to interpret.
+Add `--best-pval` to retain the smallest positive, nonmissing p-value for each
+position and allele. Ties favor the larger absolute coefficient. Different
+alleles can select different windows. This mode does not run RAND or apply
+multiple-testing correction.
 
 ```bash
-eubar scan   --intensities results/GABPA_MCF7_intensities.tsv   --array results/MCF7_DNase_8mer.txt   --genome data/hg38.fa   --region "chr5:1295105-1295140"   --mode ols   --best-pval   --save-figure results/tert_scan_best.png   > results/tert_scan_best.tsv
+eubar scan \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --array results/MCF7_DNase_8mer.txt \
+  --genome data/hg38.fa \
+  --region "chr5:1295105-1295140" \
+  --best-pval \
+  --save-figure results/tert_scan_best.png \
+  > results/tert_scan_best.tsv
 ```
 
-The figures produced by these two commands are shown below.
+The table retains the columns above and tags the method with `|best_pval`.
+The existing TERT figures below illustrate the ordinary modes; they are not
+Holm-adjusted results.
 
 All windows:
 
-![TERT scan all windows](tert_promoter.png)
+![TERT scan, all windows](tert_promoter.png)
 
-Best window per position:
+Best window for each position and allele:
 
-![TERT scan best pval](tert_promoter-best_pval.png)
+![TERT scan, ordinary best-window summary](tert_promoter-best_pval.png)
 
----
+## Scan with RAND and within-SNV Holm correction
 
-## 3. Understanding the output
+```bash
+eubar scan \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --array results/MCF7_DNase_8mer.txt \
+  --genome data/hg38.fa \
+  --region "chr5:1295105-1295140" \
+  --best-pval --holm --diagnostics \
+  --save-figure results/tert_scan_holm.png \
+  > results/tert_scan_holm.tsv
+```
 
-The scan output is written to stdout and can be redirected to a file. Each row represents one allele at one k-mer window position.
+This mode runs the SNV analysis for each of the three alternatives to each
+reference base. It includes overlapping windows that extend **outside** the
+requested interval, so sufficient FASTA flanking sequence is required. Its
+runtime and results can differ from the ordinary best-window scan.
 
-| Column | Description |
-|--------|-------------|
-| `wildcard_kmer` | The 8-mer with `.` marking the evaluated position |
-| `filled_kmer` | The 8-mer with the specific allele substituted at the variant position |
-| `window_index` | Start position of the k-mer window within the scanned sequence |
-| `snp_index` | Position of the variant within the k-mer window (0-7) |
-| `type` | `AFF` = allelic effect regression |
-| `allele` | The allele being evaluated at this position |
-| `coef` | Regression coefficient — predicted change in GC-corrected log-space ChIP-seq intensity relative to the reference allele |
-| `pval` | P-value for the predicted allelic effect |
-| `absolute_pos` | Absolute position within the scanned region (0-based) |
-| `method` | Regression method used; `ols|best_pval` when `--best-pval` is set |
+The output changes to the compact SNV schema:
+`snv`, `type`, `allele`, `effect`, `pval`, `raw_pval`, followed by diagnostic
+columns when requested. Each substitution normally has AFF ALT, RAND REF and
+RAND ALT rows, chosen at one shared window. Coordinates in `snv` are genomic
+and 1-based, including in reverse mode.
 
-### Interpreting the results
+The [SNV selection and correction rules](02_snv.md#select-one-shared-window)
+apply, including the fallback when no window has RAND support. Holm correction
+is separate for each substitution; it does not correct across the interval.
+The figure shows AFF effects, while RAND evidence remains in the table.
 
-Each position in the scanned region is tested for all three possible single-nucleotide changes. Positions with large positive coefficients and small p-values are predicted to gain TF binding if mutated to that allele; large negative coefficients indicate predicted loss.
+## Options and limits
 
-In the TERT promoter scan, the two hotspot positions (−124C>T and −146C>T) stand out as the strongest predicted gain-of-binding events across the entire interval, with no other position reaching comparable effect sizes. This is consistent with their established role in creating de novo GABPA binding sites.
+| Option | Default | Scope |
+| --- | --- | --- |
+| `--kmer-size` | 8 | Must match the contiguous array |
+| `--reverse` | Off | Reverse-complement sequence and allele orientation |
+| `--max-probes` | No cap | Matched-probe subsampling for ordinary and Holm scans |
+| `--seed` | 0 | Seed for that subsampling |
+| `--rand-n` | 500 | Background sample size in Holm mode |
+| `--diagnostics` | Off | Requires `--best-pval --holm` |
+| `--save-figure` | None | Write an AFF plot |
 
----
+`--holm` requires `--best-pval`. A custom `--rand-n`, `--no-rand`, or
+`--diagnostics` also requires the combined mode. Scan currently accepts neither
+`--mask` nor `--jobs`. To evaluate a masked interval, prepare a variant list and
+use `eubar snv --mask`.
 
-**Previous:** [SNV analysis](02_snv.md)
-**Next:** [Motif discovery](04_motifs.md)
+The retained advanced `--pooled` mode fits across windows rather than selecting
+one. It cannot be combined with `--best-pval` or `--holm`, and its current path
+does not apply `--max-probes`. It log-transforms its response, so it is not a
+drop-in replacement for ordinary OLS on signed residuals. Other retained
+controls are `--mode ols|nb`, `--no-covariates` and `--raw-lp`.
+
+**Previous:** [SNV analysis](02_snv.md) · **Next:** [Motif discovery](04_motifs.md)

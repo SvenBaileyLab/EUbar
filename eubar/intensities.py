@@ -1,11 +1,13 @@
 from __future__ import annotations
+
+from dataclasses import asdict
+from eubar.task_config import IntensitiesConfig, TaskConfigError
 import argparse
 from pybedtools import BedTool
 import os
 import tempfile
 import pyBigWig
 import math
-import sys
 import numpy as np
 
 
@@ -433,7 +435,6 @@ def residualize_intensities(
 
     Prints a coefficient table to stdout.
     """
-    import numpy as np
 
     output_mode = str(output_mode).lower()
     if output_mode not in {"resid_log", "log_corrected", "intensity_like"}:
@@ -561,7 +562,8 @@ def residualize_intensities(
     return out_map, coef_map, formula
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    defaults = IntensitiesConfig()
     parser = argparse.ArgumentParser(
         description=(
             "Extract ChIP signal over DNase/ATAC regions from either BigWig or BedGraph.\n"
@@ -577,7 +579,7 @@ def main(argv=None) -> int:
     parser.add_argument("--output", required=True, help="Output file path")
     parser.add_argument(
         "--genome-size-file", dest="genome_size_file",
-        default=None,
+        default=defaults.genome_size_file,
         help="Optional genome chrom sizes file for bedtools sort (-g)",
     )
     parser.add_argument(
@@ -595,8 +597,8 @@ def main(argv=None) -> int:
     )
     
     parser.add_argument(
-        "--genome-fasta",
-        default=None,
+        "--genome-fasta", dest="genome", metavar="GENOME_FASTA",
+        default=defaults.genome,
         help="Genome FASTA (required unless --no-residualize is used).",
     )
 
@@ -610,35 +612,38 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--resid-open",
-        default="off",
+        default=defaults.resid_open,
         choices=("auto", "off", "force"),
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--resid-output",
-        default="resid_log",
+        default=defaults.resid_output,
         choices=("resid_log", "log_corrected", "intensity_like"),
         help=argparse.SUPPRESS,
     )
 
     parser.add_argument(
         "--summary",
-        default="max",
+        default=defaults.summary,
         choices=SUMMARY_CHOICES,
         help="How to summarize signal: max/mean over full interval, or center_max/center_mean over a fixed window.",
     )
     parser.add_argument(
         "--window-bp",
         type=int,
-        default=100,
+        default=defaults.window_bp,
         help="Window size (bp) for center_* summaries (default: 100). Ignored for max/mean.",
     )
 
-    args = parser.parse_args(argv)
+    parser.set_defaults(**asdict(defaults))
+    return parser
 
-    if not args.no_residualize and not args.genome_fasta:
-        parser.error("--genome-fasta is required (use --no-residualize to skip residualization).")
 
+def run_intensities(config: IntensitiesConfig) -> int:
+    """Run intensities with validated task options; no command-line parsing."""
+    config.validate()
+    args = config
     # If residualizing, write raw extracted signal to a temp file first,
     # then overwrite --output with residualized values.
     tmp_out = args.output
@@ -683,7 +688,7 @@ def main(argv=None) -> int:
         resid_map, _, _ = residualize_intensities(
             sig_map,
             bed_path=args.bed,
-            genome_fa=args.genome_fasta,
+            genome_fa=args.genome,
             use_length=args.resid_use_length,
             resid_open=resid_open,
             output_mode=args.resid_output,
@@ -705,6 +710,17 @@ def main(argv=None) -> int:
                 pass
 
     return 0
+
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        config = IntensitiesConfig.from_values(vars(args))
+        return run_intensities(config)
+    except TaskConfigError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":
