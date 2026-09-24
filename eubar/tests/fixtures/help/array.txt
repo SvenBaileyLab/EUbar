@@ -1,0 +1,12 @@
+usage: __main__.py [-h] --bed BED --genome GENOME [--kmer-size KMER_SIZE]
+                   --output OUTPUT
+
+Build a k-mer array file from a BED file and reference genome FASTA.
+
+options:
+  -h, --help            show this help message and exit
+  --bed BED             Input BED file of genomic regions
+  --genome GENOME       Reference genome FASTA
+  --kmer-size KMER_SIZE
+                        k-mer size (default: 8)
+  --output OUTPUT       Output array file

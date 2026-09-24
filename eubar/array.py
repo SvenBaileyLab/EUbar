@@ -1,10 +1,12 @@
 from __future__ import annotations
+
+from dataclasses import asdict
+from eubar.task_config import ArrayConfig, TaskConfigError
 import argparse
 from pyfaidx import Fasta
 from collections import defaultdict
 import itertools
 from numba import njit
-import numpy as np
 
 
 def parse_bed(file_path):
@@ -75,7 +77,8 @@ def verify_kmers(all_kmers_dict, kmer_size):
         )
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    defaults = ArrayConfig()
     parser = argparse.ArgumentParser(
         description="Build a k-mer array file from a BED file and reference genome FASTA."
     )
@@ -87,7 +90,7 @@ def main(argv=None) -> int:
         "--kmer-size",
         dest="kmer_size",
         type=int,
-        default=8,
+        default=defaults.kmer_size,
         help="k-mer size (default: 8)",
     )
     parser.add_argument(
@@ -103,7 +106,14 @@ def main(argv=None) -> int:
         "--out", dest="output", default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
 
-    args = parser.parse_args(argv)
+    parser.set_defaults(**asdict(defaults))
+    return parser
+
+
+def run_array(config: ArrayConfig) -> int:
+    """Run array with validated task options; no command-line parsing."""
+    config.validate()
+    args = config
 
     fasta = Fasta(args.genome)
     all_kmers = defaultdict(list)
@@ -151,6 +161,17 @@ def main(argv=None) -> int:
     verify_kmers(all_kmers, args.kmer_size)
 
     return 0
+
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        config = ArrayConfig.from_values(vars(args))
+        return run_array(config)
+    except TaskConfigError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

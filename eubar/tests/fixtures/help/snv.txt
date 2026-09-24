@@ -1,0 +1,52 @@
+usage: __main__.py [-h] --intensities INTENSITIES [--array ARRAY] --genome
+                   GENOME
+                   (--snv-list SNV_LIST | --snv-list-file SNV_LIST_FILE)
+                   [--kmer-size KMER_SIZE] [--mask MASK] [--rand-n RAND_N]
+                   [--best-pval] [--holm] [--diagnostics] [--seed SEED]
+                   [--max-probes MAX_PROBES] [--jobs JOBS]
+
+Run motif regression on SNV(s)
+
+options:
+  -h, --help            show this help message and exit
+  --intensities INTENSITIES
+                        Path to probe intensity file
+  --array ARRAY         Path to k-mer array file mapping k-mers to genomic
+                        regions. Required for normal contiguous mode; masked
+                        mode builds its probe matcher from the intensity-
+                        region coordinates and reference genome.
+  --genome GENOME       Path to reference genome in FASTA format
+  --snv-list SNV_LIST   Comma-separated list of SNVs in chr:pos:ref>alt format
+  --snv-list-file SNV_LIST_FILE
+                        Optional file with SNVs, one per line in
+                        chr:pos:ref>alt format
+  --kmer-size KMER_SIZE
+                        K-mer size for contiguous mode (default: 8). With
+                        --mask, mask span is used instead.
+  --mask MASK           Explicit spaced/gapped sequence mask, e.g.
+                        11111000011111. 1 positions are matched; 0 positions
+                        are ignored. The SNP is tested only at informative (1)
+                        positions.
+  --rand-n RAND_N       Number of random probes to use for RAND regression
+                        (default: 500)
+  --best-pval           Summarize results by choosing one shared motif
+                        position per SNV using the ALT AFF signal and same-
+                        position RAND support, then print a compact TSV with
+                        one row each for AFF alt, RAND ref, and RAND alt.
+  --holm                Apply within-SNV Holm correction before --best-pval
+                        selection: ALT AFF p-values are corrected across
+                        tested positions, and REF+ALT RAND p-values are
+                        corrected together across tested positions. RAND
+                        support then uses Holm p < 0.05. Output pval is Holm-
+                        adjusted and raw_pval is appended.
+  --diagnostics         Append diagnostic columns (motif_pos, wildcard_kmer,
+                        n_probes, n_allele) to the --best-pval output.
+                        Requires --best-pval.
+  --seed SEED           Seed for max-probes subsampling (default: 0); RAND
+                        retains deterministic per-SNV sampling.
+  --max-probes MAX_PROBES
+                        Subsample to at most this many probes per window
+                        before fitting.
+  --jobs JOBS           Number of SNVs to process in parallel (default: 1).
+                        Each worker uses one BLAS thread by default to avoid
+                        oversubscription.

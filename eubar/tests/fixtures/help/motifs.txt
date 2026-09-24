@@ -1,0 +1,30 @@
+usage: __main__.py [-h] --intensities INTENSITIES [--array ARRAY]
+                   [--mask MASK] [--genome GENOME] [--kmer-size KMER_SIZE]
+                   [--max-gaps MAX_GAPS] [--outdir OUTDIR] [--prefix PREFIX]
+                   [--pretty-logo]
+
+Seed-and-wobble motif discovery from probe intensities + kmer occurrence
+index.
+
+options:
+  -h, --help            show this help message and exit
+  --intensities INTENSITIES
+                        Path to probe intensity file
+  --array ARRAY         Path to k-mer array file mapping k-mers to genomic
+                        regions
+  --mask MASK           Optional explicit 0/1 sequence mask for masked motif
+                        discovery, e.g. 11111000011111. When supplied, the
+                        mask defines the motif span and --genome is required;
+                        the ordinary k-mer seed/extension path is left
+                        unchanged.
+  --genome GENOME       Genome FASTA used for masked motif discovery (--mask
+                        mode)
+  --kmer-size KMER_SIZE
+                        k-mer size (default: 8)
+  --max-gaps MAX_GAPS   Max number of wildcard ('.') positions when searching
+                        seed patterns (default: 3; use 0 for exact k-mers
+                        only)
+  --outdir OUTDIR       Output directory (default: current directory)
+  --prefix PREFIX       Output prefix (default: affinity_motif)
+  --pretty-logo         Render a prettier motif logo (light gray background +
+                        fixed DNA colors)

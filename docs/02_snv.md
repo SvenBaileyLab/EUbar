@@ -1,119 +1,184 @@
-# SNV Analysis
+# SNV analysis
 
-This tutorial demonstrates how to use EUbar to predict the effect of a single nucleotide variant on TF binding affinity. We use the recurrent TERT promoter mutation −124C>T (chr5:1,295,113 C>T, hg38) as an example — a well-characterised variant known to create a de novo GABPA binding site.
+EUbar compares probe intensities for sequence contexts carrying different bases
+at the queried position. This page uses the TERT promoter variants
+`chr5:1295113:C>T` and `chr5:1295135:C>T` on hg38, with the MCF7 GABPA inputs
+from [Data preparation](01_data_prep.md).
 
-This tutorial assumes you have already completed [Data Preparation](01_data_prep.md) and have the following files:
-
-``` bash
-results/MCF7_DNase_8mer.txt
-results/GABPA_MCF7_intensities.tsv
-```
-
----
-
-## 1. Evaluate a single SNV
-
-Use `snv` to predict the effect of −124C>T on GABPA binding.
+## Run an SNV analysis
 
 ```bash
-eubar snv   --intensities results/GABPA_MCF7_intensities.tsv   --array results/MCF7_DNase_8mer.txt   --genome data/hg38.fa   --snv-list "chr5:1295113:C>T"
+eubar snv \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --array results/MCF7_DNase_8mer.txt \
+  --genome data/hg38.fa \
+  --snv-list "chr5:1295113:C>T" \
+  > results/tert_snv.tsv
 ```
 
-This returns one row per overlapping 8-mer window for each allele and regression type (AFF and RAND). For an 8-mer analysis, a single SNV generates 8 overlapping windows, each placing the variant at a different position within the k-mer.
+SNV coordinates are **1-based**. Match the reference genome assembly and
+chromosome names to your input files. Quote inline variants so the shell does
+not interpret `>` as output redirection.
 
-Expected output:
+The default is an 8-mer analysis with OLS regression and RAND enabled. A variant
+has eight overlapping sequence windows, each placing the changed base at a
+different position. For each usable window, the full output reports AFF for the
+requested ALT allele and RAND for REF and ALT. Missing or unsupported fits can
+produce missing values or fewer rows.
 
-```  text
-snv                     type    allele  motif_pos  wildcard_kmer   effect          pval
-chr5:1295113:C>T        AFF     T       0          CAGCCCC.        -0.03443606     1.318e-01
-chr5:1295113:C>T        AFF     T       1          AGCCCC.T         0.03919671     1.842e-01
-chr5:1295113:C>T        AFF     T       2          GCCCC.TC         0.1554104      1.969e-08
-chr5:1295113:C>T        AFF     T       3          CCCC.TCC         0.0901687      1.353e-05
-chr5:1295113:C>T        AFF     T       4          CCC.TCCG         0.4309754      8.004e-22
-chr5:1295113:C>T        AFF     T       5          CC.TCCGG         0.5909847      2.575e-38
-chr5:1295113:C>T        AFF     T       6          C.TCCGGG         1.006108       8.756e-136
-chr5:1295113:C>T        AFF     T       7          .TCCGGGC         0.5811603      1.609e-35
-chr5:1295113:C>T        RAND    C       0          NA               0.01321019     6.427e-01
-chr5:1295113:C>T        RAND    C       1          NA              -0.04817633     1.470e-01
-...
-chr5:1295113:C>T        RAND    T       6          NA               1.164914       6.363e-139
-chr5:1295113:C>T        RAND    T       7          NA               0.6924163      2.447e-43
-```
+| Column | Meaning |
+| --- | --- |
+| `snv` | Requested variant, `chr:pos:ref>alt` |
+| `type` | `AFF` or `RAND`; see below |
+| `allele` | Base being reported |
+| `motif_pos` | Zero-based window start in the extracted SNV context; not a genomic coordinate or the changed base's index inside the window |
+| `wildcard_kmer` | Sequence with `.` at the tested base; full-output RAND rows use `NA` |
+| `effect` | Fitted coefficient: ALT versus REF for AFF; allele versus background for RAND |
+| `pval` | P-value for that coefficient |
 
-### Output columns
+With the default residualized input and OLS fit, effects are on the input
+intensity scale. They are not binding probabilities or fold changes. Positive
+AFF indicates predicted gain relative to REF; negative AFF indicates loss.
 
-| Column | Description |
-|--------|-------------|
-| `snv` | Variant in `chr:pos:ref>alt` format |
-| `type` | `AFF` = allelic effect regression; `RAND` = background enrichment regression |
-| `allele` | Allele being evaluated |
-| `motif_pos` | Position of the k-mer window start relative to the SNV context (0 = leftmost window) |
-| `wildcard_kmer` | The 8-mer sequence with `.` marking the variant position; `NA` for RAND rows |
-| `effect` | Regression coefficient — difference in GC-corrected log-space ChIP-seq intensity between the queried allele and the reference |
-| `pval` | P-value for the allelic effect |
+## Understanding AFF and RAND
 
-### Interpreting the AFF rows
+AFF asks whether the ALT sequence context has higher or lower probe intensity
+than the REF context. RAND asks whether each allele context has higher intensity
+than sampled background probes. Background probes exclude regions matched to
+the queried SNV contexts. They come from the input probe universe, not from an
+external collection of experimentally unbound sites.
 
-Each AFF row corresponds to one overlapping k-mer window. The effect and significance vary across windows because each window places the variant in a different sequence context, capturing how the SNV interacts with its local sequence environment. In this example, window 6 (wildcard kmer `C.TCCGGG`) shows the strongest predicted gain of GABPA binding (effect = 1.01, p = 8.8e-136), reflecting the creation of an ETS-family binding motif by the alternate allele.
+![Synthetic examples of gain, loss, binding without an allelic effect, and no enrichment](aff_rand_synthetic.png)
 
-A positive effect means the alternate allele is associated with higher TF occupancy; predicted gain of binding. A negative effect means predicted loss of binding.
+*Illustration using synthetic probe intensities. Gray: background; purple: REF;
+orange: ALT. Black brackets compare REF with ALT (AFF); colored brackets compare
+each allele with background (RAND). The p-value labels illustrate these examples
+and are not results from the GABPA tutorial data. “ns” means not significant in
+the illustration. The boxplots explain the comparisons; EUbar fits regression
+models rather than using the boxplot itself as a test.*
 
----
+| Example | AFF | RAND | Interpretation |
+| --- | --- | --- | --- |
+| Gain | Positive ALT effect | ALT above background; REF need not be | Predicted gain of binding |
+| Loss | Negative ALT effect | REF above background; ALT need not be | Predicted loss of binding |
+| Bound, no effect | No clear REF–ALT difference | Both above background | Enrichment without a detectable allelic difference |
+| Unbound | No clear REF–ALT difference | Neither above background | No enrichment detected in this analysis |
 
-## 2. Get a single best-window summary
+A significant **positive** RAND effect supports enrichment of that sequence
+context across the probe collection. It does not establish occupancy at the
+queried genomic locus. Likewise, a nonsignificant result is not proof of absence
+of binding. Read the coefficient, p-value and probe support together.
 
-For a concise per-SNV summary, use `--best-pval`. This selects the window with the strongest predicted effect supported by RAND background evidence and returns three rows per SNV: the AFF result and both RAND alleles at that window position.
+Requiring both RAND alleles to be significant would exclude the gain and loss
+examples above. A downstream filter can be stricter, but that is a separate
+choice from EUbar's window-selection rule.
+
+## Select one shared window
 
 ```bash
-eubar snv   --intensities results/GABPA_MCF7_intensities.tsv   --array results/MCF7_DNase_8mer.txt   --genome data/hg38.fa   --snv-list "chr5:1295113:C>T"   --best-pval
+eubar snv \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --array results/MCF7_DNase_8mer.txt \
+  --genome data/hg38.fa \
+  --snv-list "chr5:1295113:C>T,chr5:1295135:C>T" \
+  --best-pval --holm --diagnostics \
+  > results/tert_best.tsv
 ```
 
-Expected output:
+`--best-pval` ranks windows by the ALT AFF **p-value**, smallest first. Ties are
+resolved by larger absolute effect, then window position. It selects the first
+window where REF or ALT has positive RAND effect and RAND p < 0.05. With
+`--holm`, that support check uses the adjusted RAND p-value.
 
-``` tsv
-snv                     type    allele  effect      pval
-chr5:1295113:C>T        AFF     T       1.006108    8.756e-136
-chr5:1295113:C>T        RAND    C       0.190231    3.249e-05
-chr5:1295113:C>T        RAND    T       1.164914    6.363e-139
-```
+**If no window passes RAND support, EUbar still returns the top AFF window.**
+A row in the summary is therefore not automatically a supported binding call.
+Selection does not itself require a significant AFF result.
 
-This is the recommended output format for large-scale analyses and downstream filtering.
+The summary reports three rows at the same window: AFF ALT, RAND REF and RAND
+ALT. Its columns start with `snv`, `type`, `allele`, `effect`, `pval`.
+`--holm` adds `raw_pval`; `--diagnostics` adds:
 
----
+| Column | Meaning |
+| --- | --- |
+| `motif_pos` | Selected window start in the SNV context |
+| `wildcard_kmer` | Selected sequence context, also displayed on RAND rows |
+| `n_probes` | Probe count in the reconstructed fit input; RAND includes background |
+| `n_allele` | Probe count carrying the reported allele |
 
-## 3. Evaluate a list of SNVs
+Diagnostics require `--best-pval`. Missing fits remain missing; do not convert
+`NA` or `nan` into a nonsignificant p-value or zero effect.
 
-For multiple variants, provide a file with one variant per line in `chr:pos:ref>alt` format.
+### What Holm corrects
 
-``` bash
-eubar snv   --intensities results/GABPA_MCF7_intensities.tsv   --array results/MCF7_DNase_8mer.txt   --genome data/hg38.fa   --snv-list-file data/snvs.txt   --best-pval
-```
+For each requested SNV, EUbar corrects two families separately:
 
-Where `data/snvs.txt` contains one variant per line:
+- ALT AFF tests across windows, normally eight tests for an 8-mer.
+- REF and ALT RAND tests together across windows, normally sixteen tests.
 
-``` text
+Only finite p-values enter the correction. The output `pval` becomes adjusted;
+`raw_pval` retains the original value. This is **within-SNV** correction, not
+correction across a variant list, TFs or datasets. `--holm` can also be used with
+full SNV output, without `--best-pval`.
+
+## Variant files and parallel runs
+
+Save one variant per line in `data/snvs.txt`:
+
+```text
 chr5:1295113:C>T
 chr5:1295135:C>T
 ```
 
----
+```bash
+eubar snv \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --array results/MCF7_DNase_8mer.txt \
+  --genome data/hg38.fa \
+  --snv-list-file data/snvs.txt \
+  --best-pval --holm --diagnostics --jobs 4 \
+  > results/snvs.tsv
+```
 
-## 4. Understanding RAND
+Use either `--snv-list` or `--snv-list-file`. `--jobs` defaults to 1 and parallelizes
+across SNVs, preserving their output order. Workers consume additional memory.
 
-The RAND rows are a critical part of interpreting EUbar results. For each SNV, EUbar samples a background set of probes from accessible regions that do not match the queried k-mer sequence. It then fits the same regression model to these background probes, asking whether either allele sequence is enriched among more strongly bound regions across the array as a whole.
+## Masks and probe limits
 
-**Why RAND matters:** The AFF regression tells you whether the alternate allele probes have higher intensity than the reference allele probes in the local k-mer context. But this difference is only meaningful if the variant context is actually engaged by the TF. RAND provides this confirmation; a significant positive RAND coefficient (p < 0.05, effect > 0) for either allele indicates that sequences containing that k-mer are preferentially enriched in highly occupied regions across the accessible genome, confirming that the TF actively binds this sequence context.
+A mask specifies matched bases and ignored spacer positions. Masked SNV runs
+read probe sequences from the intensity-file coordinates and genome, so they do
+not need an array file:
 
-**Interpreting RAND in the example above:**
+```bash
+eubar snv \
+  --intensities results/GABPA_MCF7_intensities.tsv \
+  --genome data/hg38.fa \
+  --mask 111100001111 \
+  --snv-list "chr5:1295113:C>T" \
+  --best-pval --holm --diagnostics \
+  > results/tert_masked.tsv
+```
 
-- RAND C (effect = 0.19, p = 3.2e-05): the reference allele context is enriched among more strongly bound probes; the locus is already engaged by GABPA.
-- RAND T (effect = 1.16, p = 6.4e-139): the alternate allele context shows even stronger enrichment; consistent with the variant creating a higher-affinity binding sequence.
+This mask is an example of the syntax, not a recommendation for GABPA.
+See [Masks and calibration](06_masks_and_calibration.md) for choosing a pattern,
+interpreting its span, and setting `--max-probes`.
 
-Together, AFF and RAND support the interpretation that −124C>T creates a stronger GABPA binding site at an already-accessible locus, consistent with its established role as a driver mutation.
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--kmer-size` | 8 | Contiguous k-mer size; match the array used |
+| `--mask` | None | Explicit 0/1 mask; its span replaces k-mer size |
+| `--rand-n` | 500 | Requested background probes per RAND window; availability can limit the sample |
+| `--max-probes` | No cap | Approximate matched-probe budget per window, shared across allele groups |
+| `--seed` | 0 | Matched-probe subsampling seed; does not replace RAND's deterministic sampling |
+| `--jobs` | 1 | Number of SNV workers |
 
-**Filtering on RAND:** When processing large numbers of SNVs, a standard filter is to retain predictions where at least one RAND allele has p < 0.05 and a positive effect, confirming active TF engagement at the variant site.
+The older `--kmerPositions` and `--kmer_size` spellings remain accepted.
+New commands in these docs use `--array` and `--kmer-size`. The best-window
+CLI flag is `--best-pval`; `best_pval` is the Python/YAML field name.
 
----
+Advanced compatibility options include `--mode ols|nb`, `--no-covariates`,
+`--raw-lp`, `--no-rand` and `--debug`; some are hidden from normal help.
+OLS is the default for residualized intensities. Negative-binomial mode is not
+an interchangeable choice for signed residuals. `--no-rand` removes background
+evidence and RAND rows; the summary then falls back to AFF ranking.
 
-**Previous:** [Data Preparation](01_data_prep.md)
-**Next:** [Scan analysis](03_scan.md)
+**Previous:** [Data preparation](01_data_prep.md) · **Next:** [Scan analysis](03_scan.md)

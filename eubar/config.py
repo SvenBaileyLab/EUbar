@@ -2,9 +2,8 @@ from __future__ import annotations
 
 """YAML configuration support for EUbar.
 
-This module sits above the existing command implementations. It translates a
-validated YAML document into the same argv the ordinary CLI receives, so YAML
-support does not change the analysis/statistical code.
+YAML documents resolve to the same task options used by the CLI and Python API.
+Argument rendering is retained for dry-run display and compatibility.
 """
 
 from dataclasses import dataclass
@@ -419,3 +418,45 @@ def pipeline_step_paths(cfg: TaskConfig) -> List[Path]:
         raise ConfigError("not a pipeline config")
     steps = cfg.raw.get("steps") or []
     return [Path(_resolve_path(step, cfg.base_dir)) for step in steps]
+
+def task_options(cfg: TaskConfig, overrides: Optional[Mapping[str, Any]] = None):
+    """Resolve a YAML document directly to task options and stdout destination."""
+    from .api import TASKS
+    from .task_config import TaskConfigError
+
+    if cfg.task == 'pipeline':
+        raise ConfigError('pipeline configs do not map to a single task')
+    values = {}
+    stdout_path = None
+    for section_name in ('inputs', 'parameters', 'output'):
+        specs = getattr(cfg.spec, section_name)
+        for key, value in _require_mapping(cfg.raw.get(section_name), section_name).items():
+            if value is None or value == '':
+                continue
+            if section_name == 'output' and key == 'stdout':
+                stdout_path = _resolve_path(value, cfg.base_dir)
+                continue
+            spec = specs[key]
+            name = spec.cli.lstrip('-').replace('-', '_')
+            if spec.kind == PATH:
+                value = _resolve_path(value, cfg.base_dir)
+            elif spec.kind == CSV:
+                value = _csv(value)
+            elif spec.kind == FLAG:
+                if not isinstance(value, bool):
+                    raise ConfigError(f"'{key}' must be true or false")
+            if name == 'genome_fasta':
+                name = 'genome'
+            elif name == 'no_combine_revcomp':
+                name, value = 'combine_revcomp', not value
+            values[name] = value
+    if cfg.task.startswith('calibrate_'):
+        values['calibration'] = cfg.spec.positional[0]
+    values.update(overrides or {})
+    config_type = TASKS[cfg.task][2]
+    try:
+        options = config_type.from_values(values)
+        options.validate()
+    except TaskConfigError as exc:
+        raise ConfigError(str(exc)) from exc
+    return options, stdout_path

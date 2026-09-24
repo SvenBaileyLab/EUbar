@@ -18,6 +18,9 @@ cd EUbar
 pip install .
 ```
 
+Signal extraction also requires the external `bedtools` executable. For YAML
+jobs, install the optional dependency with `pip install 'eubar[yaml]'`.
+
 Confirm the install:
 
 ```bash
@@ -28,11 +31,15 @@ eubar --help
 
 ## Workflow overview
 
-Every EUbar analysis follows three steps:
+For contiguous sequence analyses:
 
 1. **Build an array file** — index all k-mers in your accessible regions
 2. **Compute probe intensities** — summarise ChIP-seq signal across those regions
 3. **Run analysis** — predict SNV effects, scan a region, or discover motifs
+
+Masked SNV and motif analyses use probe intensities and genome sequence directly,
+without an array file. [Calibration](docs/06_masks_and_calibration.md) compares
+probe caps or candidate masks before you choose settings for an analysis.
 
 ---
 
@@ -45,6 +52,9 @@ Every EUbar analysis follows three steps:
 | `snv` | Predict the effect of one or more SNVs on TF binding |
 | `scan` | Scan a genomic region for predicted binding effects at every position |
 | `motifs` | Derive an affinity-based TF binding motif from probe intensities |
+| `calibrate max-probes` | Assess coefficient stability across probe caps |
+| `calibrate mask` | Compare mask representation and coefficient stability |
+| `run` | Execute a YAML task or pipeline |
 
 Command-specific help is available with `eubar <command> --help`.
 
@@ -54,13 +64,20 @@ Command-specific help is available with `eubar <command> --help`.
 
 ```bash
 # 1. Build array
-eubar array   --bed regions.bed   --genome hg38.fa   --kmer-size 8   --output regions_8mer.txt
+eubar array \
+  --bed regions.bed --genome hg38.fa \
+  --kmer-size 8 --output regions_8mer.txt
 
 # 2. Compute intensities
-eubar intensities   --bed regions.bed   --signal tf_chipseq.bw   --genome-fasta hg38.fa   --output probe_intensities.tsv
+eubar intensities \
+  --bed regions.bed --signal tf_chipseq.bw \
+  --genome-fasta hg38.fa --output probe_intensities.tsv
 
 # 3. Predict SNV effect
-eubar snv   --intensities probe_intensities.tsv   --array regions_8mer.txt   --genome hg38.fa   --snv-list "chr5:1295113:C>T"   --best-pval
+eubar snv \
+  --intensities probe_intensities.tsv --array regions_8mer.txt \
+  --genome hg38.fa --snv-list "chr5:1295113:C>T" \
+  --best-pval --holm --diagnostics
 ```
 
 ---
@@ -72,7 +89,9 @@ Step-by-step tutorials using real ENCODE data (MCF7 DNase-seq + GABPA ChIP-seq):
 - [Data preparation](docs/01_data_prep.md) — download data, build array, compute intensities
 - [SNV analysis](docs/02_snv.md) — predict allelic effects on TF binding
 - [Scan analysis](docs/03_scan.md) — scan a genomic region for binding effects
-- [Motif discovery](docs/04_motifs.md) — derive an affinity-based binding motif
+- [Motif discovery](docs/04_motifs.md) — contiguous and masked motifs
+- [Masks and calibration](docs/06_masks_and_calibration.md) — spacing, probe limits and recommendation tables
+- [YAML jobs](docs/07_yaml.md) — reusable tasks and pipelines
 
 ---
 
@@ -87,3 +106,8 @@ If you use EUbar in your research, please cite:
 ## License
 
 GNU General Public License v3.0.
+
+## Python API and tests
+
+See [the Python task API](docs/05_python_api.md) for calling tasks directly and
+[the test suite](eubar/tests/README.md) for regression checks.

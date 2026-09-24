@@ -1,0 +1,60 @@
+usage: __main__.py [-h] [--array ARRAY] --intensities INTENSITIES --out-prefix
+                   OUT_PREFIX [--genome GENOME] [--masks MASKS]
+                   [--mask-file MASK_FILE] [--control-masks CONTROL_MASKS]
+                   [--control-mask-file CONTROL_MASK_FILE]
+                   [--random-controls RANDOM_CONTROLS]
+                   [--stability-probes STABILITY_PROBES]
+                   [--kmer-size KMER_SIZE] [--n-families N_FAMILIES]
+                   [--repeats REPEATS] [--caps CAPS] [--seed SEED]
+                   [--min-probes MIN_PROBES] [--plot] [--quiet]
+                   [{max-probes,mask}]
+
+Calibrate EUbar analysis parameters from probe representation and effect
+stability. Use 'max-probes' for the production probe cap or 'mask' to compare
+explicit masks.
+
+positional arguments:
+  {max-probes,mask}     Calibration target (default: max-probes)
+
+options:
+  -h, --help            show this help message and exit
+  --array ARRAY         EUbar k-mer positions/array file (required for max-
+                        probes calibration)
+  --intensities INTENSITIES
+                        EUbar resid_log intensity file
+  --out-prefix OUT_PREFIX
+                        Output prefix
+  --genome GENOME       Genome FASTA (required for mask calibration)
+  --masks MASKS         Comma-separated explicit 0/1 masks for mask
+                        calibration
+  --mask-file MASK_FILE
+                        Text file containing one or more candidate 0/1 masks
+  --control-masks CONTROL_MASKS
+                        Comma-separated diagnostic control masks. Controls are
+                        fully evaluated and reported but are excluded from the
+                        automatic recommendation.
+  --control-mask-file CONTROL_MASK_FILE
+                        Text file containing diagnostic control masks.
+                        Controls are evaluated but excluded from the automatic
+                        recommendation.
+  --random-controls RANDOM_CONTROLS
+                        Mask calibration only: generate this many random
+                        diagnostic masks matched to the recommended
+                        candidate's span and number of informative positions.
+                        First/last positions remain informative. Random
+                        controls are excluded from the recommendation
+                        (default: 0).
+  --stability-probes STABILITY_PROBES
+                        Fixed probe count used to compare mask effect
+                        stability (default: 100)
+  --kmer-size KMER_SIZE
+  --n-families N_FAMILIES
+                        Representative/evaluated families. Defaults: 100 for
+                        max-probes; 500 for mask calibration.
+  --repeats REPEATS     Subsamples per family and cap
+  --caps CAPS
+  --seed SEED
+  --min-probes MIN_PROBES
+                        Minimum usable probes per family
+  --plot                Also write a diagnostic PDF
+  --quiet               Suppress progress messages

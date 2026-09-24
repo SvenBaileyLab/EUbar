@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from eubar.task_config import ScanConfig, TaskConfigError
+
 import argparse
 import math
 import sys
@@ -207,9 +210,8 @@ def _holm_scan(args, region, matcher, design, engine):
     """
     from eubar.core.sequence import SnvWindow
     from eubar.core.analyze import analyze_snv
-    from eubar.snv import (
-        _apply_holm_within_snv, _best_pval_summary_rows, _print_best_pval_table,
-    )
+    from eubar.core.snv_results import _apply_holm_within_snv, _best_pval_summary_rows
+    from eubar.core.reporting import _print_best_pval_table
 
     header = "snv\ttype\tallele\teffect\tpval\traw_pval"
     if args.diagnostics:
@@ -261,7 +263,8 @@ def _holm_scan(args, region, matcher, design, engine):
     return 0
 
 
-def main(argv=None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    defaults = ScanConfig()
     p = argparse.ArgumentParser(description="Refactored scan-mode motif regression")
     p.add_argument("--intensities", required=True, help="Path to probe intensity file")
     array_group = p.add_mutually_exclusive_group(required=True)
@@ -279,7 +282,7 @@ def main(argv=None) -> int:
         "--kmer-size",
         dest="kmer_size",
         type=int,
-        default=8,
+        default=defaults.kmer_size,
         help="K-mer size (default: 8)",
     )
     p.add_argument(
@@ -287,7 +290,7 @@ def main(argv=None) -> int:
     )
 
     p.add_argument(
-        "--mode", choices=["ols", "nb"], default="ols", help=argparse.SUPPRESS,
+        "--mode", choices=["ols", "nb"], default=defaults.mode, help=argparse.SUPPRESS,
     )
 
     grp = p.add_mutually_exclusive_group()
@@ -302,9 +305,9 @@ def main(argv=None) -> int:
         "--reverse", action="store_true", help="Use reverse complement of the sequence"
     )
     p.add_argument("--raw-lp", action="store_true", help=argparse.SUPPRESS)
-    p.add_argument("--seed", type=int, default=0, help="Seed for max-probes subsampling (default: 0); RAND background retains its existing deterministic sampling.")
+    p.add_argument("--seed", type=int, default=defaults.seed, help="Seed for max-probes subsampling (default: 0); RAND background retains its existing deterministic sampling.")
     p.add_argument(
-        "--max-probes", type=int, default=None, dest="max_probes",
+        "--max-probes", type=int, default=defaults.max_probes, dest="max_probes",
         help="Subsample to at most this many probes per window before fitting."
     )
     p.add_argument(
@@ -317,19 +320,19 @@ def main(argv=None) -> int:
              "TSV with adjusted pval and raw_pval; includes flanking windows. "
              "This does not correct across the whole region.",
     )
-    p.add_argument("--rand-n", type=int, default=500,
+    p.add_argument("--rand-n", type=int, default=defaults.rand_n,
                    help="RAND background size for --holm (default: 500)")
     p.add_argument("--no-rand", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--diagnostics", action="store_true",
                    help="Append SNV diagnostics in --best-pval --holm mode")
-    args = p.parse_args(argv)
-    if args.holm and not args.best_pval:
-        p.error("--holm requires --best-pval and cannot be used with --pooled")
-    if not args.holm and (args.diagnostics or args.no_rand or args.rand_n != 500):
-        p.error("--diagnostics, --no-rand and custom --rand-n require --best-pval --holm")
-    if args.kmer_size < 1 or args.rand_n < 0:
-        p.error("--kmer-size must be positive and --rand-n must be non-negative")
+    p.set_defaults(**asdict(defaults))
+    return p
 
+
+def run_scan(config: ScanConfig) -> int:
+    """Run scan with validated task options; no command-line parsing."""
+    config.validate()
+    args = config
     intens = IntensityTable.from_file(args.intensities)
     kmers = KmerIndex.from_file(args.array)
 
@@ -374,6 +377,17 @@ def main(argv=None) -> int:
     if args.save_figure:
         plot_aff_motif_effects(legacy_rows, args.save_figure, reverse=args.reverse)
     return 0
+
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        config = ScanConfig.from_values(vars(args))
+        return run_scan(config)
+    except TaskConfigError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

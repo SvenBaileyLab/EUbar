@@ -23,7 +23,8 @@ from scipy.stats import t as student_t
 
 from .design import fold_lp_half
 from .matching import wildcard_pos_from_offset
-from .masking import SequenceMask, MaskHit, _signature_codes
+from .masking import MaskHit, _signature_codes
+from .patterns import SequenceMask
 from .sampling import subsample_probes
 from .sequence import _open_fasta
 

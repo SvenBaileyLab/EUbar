@@ -1,0 +1,8 @@
+Usage:
+  eubar run CONFIG.yaml
+  eubar run A.yaml B.yaml C.yaml
+  eubar run CONFIG.yaml --jobs 8
+  eubar run CONFIG.yaml --dry-run
+
+Paths inside YAML files are resolved relative to that YAML file.
+When one config is supplied, trailing CLI flags override YAML values.
