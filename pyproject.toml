@@ -7,19 +7,32 @@ name = "eubar"
 dynamic = ["version"]
 description = "Regression-based toolkit for modeling sequence effects on transcription factor binding using accessible chromatin as probes"
 readme = "README.md"
-requires-python = ">=3.8"
-authors = [{ name = "Eftyhios (Aki) Kirbizakis, Swneke Bailey" }]
+requires-python = ">=3.12"
+
+authors = [
+  { name = "Eftyhios (Aki) Kirbizakis" },
+  { name = "Swenke Bailey" }
+]
+
 license = { text = "GNU General Public License v3.0" }
+
 dependencies = [
-  "matplotlib>=3.6",
-  "numpy>=1.22",
-  "pandas>=1.5",
-  "pybedtools>=0.9",
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+  "pandas>=2.1",
+  "pybedtools>=0.12",
   "pyfaidx>=0.8",
   "statsmodels>=0.14",
-  "pyBigWig>=0.3.18",
-  "numba>=0.56",
-  "scipy>=1.9"
+  "pyBigWig>=0.3.22",
+  "numba>=0.59",
+  "scipy>=1.11",
+  "PyYAML>=6",
+  "logomaker>=0.8"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=7"
 ]
 
 [project.scripts]
@@ -27,10 +40,6 @@ eubar = "eubar.cli:main"
 
 [project.urls]
 Repository = "https://github.com/SvenBaileyLab/EUbar"
-
-[project.optional-dependencies]
-test = ["pytest>=7", "PyYAML>=6"]
-yaml = ["PyYAML>=6"]
 
 [tool.setuptools.packages.find]
 include = ["eubar*"]
