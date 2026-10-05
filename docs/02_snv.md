@@ -48,6 +48,16 @@ than sampled background probes. Background probes exclude regions matched to
 the queried SNV contexts. They come from the input probe universe, not from an
 external collection of experimentally unbound sites.
 
+The AFF regression adjusts for each probe region's CpG observed/expected ratio
+(`n_CG × length / (n_C × n_G)`), alongside the k-mer's position in the region and
+the region's length. CpG-island promoters carry high ChIP signal for most factors,
+and when one allele's k-mer occurs mainly in CpG-rich regions (common for variants
+that create or destroy a CpG), the REF-versus-ALT comparison would otherwise pick
+up the regional difference rather than an allelic one. The ratio is computed once
+from `--genome` and cached next to the intensity file as
+`<intensities>.cpg_oe.tsv`. `--no-cpg-covariate` turns it off and reproduces
+results from versions without the adjustment. RAND is not affected.
+
 ![Synthetic examples of gain, loss, binding without an allelic effect, and no enrichment](aff_rand_synthetic.png)
 
 *Illustration using synthetic probe intensities. Gray: background; purple: REF;
@@ -170,6 +180,7 @@ interpreting its span, and setting `--max-probes`.
 | `--max-probes` | No cap | Approximate matched-probe budget per window, shared across allele groups |
 | `--seed` | 0 | Matched-probe subsampling seed; does not replace RAND's deterministic sampling |
 | `--jobs` | 1 | Number of SNV workers |
+| `--no-cpg-covariate` | Off | Drop the regional CpG adjustment from AFF (see above) |
 
 The older `--kmerPositions` and `--kmer_size` spellings remain accepted.
 New commands in these docs use `--array` and `--kmer-size`. The best-window
@@ -182,3 +193,4 @@ an interchangeable choice for signed residuals. `--no-rand` removes background
 evidence and RAND rows; the summary then falls back to AFF ranking.
 
 **Previous:** [Data preparation](01_data_prep.md) · **Next:** [Scan analysis](03_scan.md)
+

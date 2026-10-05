@@ -302,6 +302,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--no-covariates", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
+        "--no-cpg-covariate", action="store_true", dest="no_cpg_covariate",
+        help="Do not adjust the AFF test for regional CpG observed/expected (on by default).",
+    )
+    p.add_argument(
         "--reverse", action="store_true", help="Use reverse complement of the sequence"
     )
     p.add_argument("--raw-lp", action="store_true", help=argparse.SUPPRESS)
@@ -340,7 +344,12 @@ def run_scan(config: ScanConfig) -> int:
         args.region, args.genome, reverse=args.reverse
     )
     matcher = MotifMatcher(kmers.kmers)
-    design = DesignBuilder(intens.values)
+    region_cpg = None
+    if not args.no_cpg_covariate and not args.no_covariates:
+        from eubar.core.region_context import default_cache_path, load_region_cpg_oe
+        region_cpg = load_region_cpg_oe(intens.values.keys(), args.genome,
+                                        cache_path=default_cache_path(args.intensities))
+    design = DesignBuilder(intens.values, region_cpg_oe=region_cpg)
     engine = RegressionEngine()
 
     if args.holm:

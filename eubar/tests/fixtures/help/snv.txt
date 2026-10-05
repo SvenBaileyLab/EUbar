@@ -2,8 +2,8 @@ usage: __main__.py [-h] --intensities INTENSITIES [--array ARRAY] --genome
                    GENOME
                    (--snv-list SNV_LIST | --snv-list-file SNV_LIST_FILE)
                    [--kmer-size KMER_SIZE] [--mask MASK] [--rand-n RAND_N]
-                   [--best-pval] [--holm] [--diagnostics] [--seed SEED]
-                   [--max-probes MAX_PROBES] [--jobs JOBS]
+                   [--best-pval] [--holm] [--diagnostics] [--no-cpg-covariate]
+                   [--seed SEED] [--max-probes MAX_PROBES] [--jobs JOBS]
 
 Run motif regression on SNV(s)
 
@@ -42,6 +42,9 @@ options:
   --diagnostics         Append diagnostic columns (motif_pos, wildcard_kmer,
                         n_probes, n_allele) to the --best-pval output.
                         Requires --best-pval.
+  --no-cpg-covariate    Do not adjust the AFF test for regional CpG
+                        observed/expected (on by default; computed once from
+                        --genome and cached next to the intensity file).
   --seed SEED           Seed for max-probes subsampling (default: 0); RAND
                         retains deterministic per-SNV sampling.
   --max-probes MAX_PROBES

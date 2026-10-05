@@ -1,8 +1,9 @@
 usage: __main__.py [-h] --intensities INTENSITIES --array ARRAY --genome
                    GENOME --region REGION [--kmer-size KMER_SIZE]
-                   [--best-pval] [--reverse] [--seed SEED]
-                   [--max-probes MAX_PROBES] [--save-figure SAVE_FIGURE]
-                   [--holm] [--rand-n RAND_N] [--diagnostics]
+                   [--best-pval] [--no-cpg-covariate] [--reverse]
+                   [--seed SEED] [--max-probes MAX_PROBES]
+                   [--save-figure SAVE_FIGURE] [--holm] [--rand-n RAND_N]
+                   [--diagnostics]
 
 Refactored scan-mode motif regression
 
@@ -19,6 +20,8 @@ options:
   --best-pval           Summarize non-pooled scan by minimum p-value; with
                         --holm, use SNV fits and same-window RAND support
                         instead
+  --no-cpg-covariate    Do not adjust the AFF test for regional CpG
+                        observed/expected (on by default).
   --reverse             Use reverse complement of the sequence
   --seed SEED           Seed for max-probes subsampling (default: 0); RAND
                         background retains its existing deterministic

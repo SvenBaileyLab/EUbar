@@ -43,7 +43,7 @@ class RegressionEngine:
         *,
         max_retries: int = 2,
         scale_covariates: bool = True,
-        covariate_cols: Tuple[str, ...] = ("lp", "sl"),
+        covariate_cols: Tuple[str, ...] = ("lp", "sl", "cpg_oe"),
         drop_zero_variance: bool = True,
     ):
         self.max_retries = max_retries

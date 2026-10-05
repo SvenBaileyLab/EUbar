@@ -124,6 +124,7 @@ class SnvConfig(TaskOptions):
     diagnostics: bool = False
     mode: str = 'ols'
     no_covariates: bool = False
+    no_cpg_covariate: bool = False
     raw_lp: bool = False
     seed: int = 0
     max_probes: Optional[int] = None
@@ -166,6 +167,7 @@ class ScanConfig(TaskOptions):
     pooled: bool = False
     best_pval: bool = False
     no_covariates: bool = False
+    no_cpg_covariate: bool = False
     reverse: bool = False
     raw_lp: bool = False
     seed: int = 0

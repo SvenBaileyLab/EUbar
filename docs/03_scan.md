@@ -108,6 +108,7 @@ The figure shows AFF effects, while RAND evidence remains in the table.
 | `--rand-n` | 500 | Background sample size in Holm mode |
 | `--diagnostics` | Off | Requires `--best-pval --holm` |
 | `--save-figure` | None | Write an AFF plot |
+| `--no-cpg-covariate` | Off | Drop the regional CpG adjustment from AFF ([details](02_snv.md#understanding-aff-and-rand)) |
 
 `--holm` requires `--best-pval`. A custom `--rand-n`, `--no-rand`, or
 `--diagnostics` also requires the combined mode. Scan currently accepts neither
@@ -116,8 +117,9 @@ use `eubar snv --mask`.
 
 The retained advanced `--pooled` mode fits across windows rather than selecting
 one. It cannot be combined with `--best-pval` or `--holm`, and its current path
-does not apply `--max-probes`. It log-transforms its response, so it is not a
+does not apply `--max-probes` or the CpG adjustment. It log-transforms its response, so it is not a
 drop-in replacement for ordinary OLS on signed residuals. Other retained
 controls are `--mode ols|nb`, `--no-covariates` and `--raw-lp`.
 
 **Previous:** [SNV analysis](02_snv.md) · **Next:** [Motif discovery](04_motifs.md)
+
