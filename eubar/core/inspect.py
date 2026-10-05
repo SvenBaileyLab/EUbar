@@ -11,7 +11,8 @@ The main idea is that in a Jupyter notebook you can do:
     I = IntensityTable.from_file(...)
     K = KmerIndex.from_file(...)
     matcher = MotifMatcher(K.kmers)
-    design = DesignBuilder(I.values)
+    cpg = load_region_cpg_oe(I.values.keys(), genome_fa)   # eubar.core.region_context; omit to match --no-cpg-covariate
+    design = DesignBuilder(I.values, region_cpg_oe=cpg)
     snv = SnvWindow.from_snv(...)
 
     payloads = build_aff_payloads_for_snv(snv, matcher=matcher, design=design, k=8)

@@ -61,8 +61,15 @@ class WindowDesign:
 class DesignBuilder:
     """Build a per-window design matrix from scan-style matches."""
 
-    def __init__(self, intensities: Mapping[str, float]):
+    def __init__(
+        self,
+        intensities: Mapping[str, float],
+        region_cpg_oe: Optional[Mapping[str, float]] = None,
+    ):
         self.intensities = intensities
+        # Optional per-region CpG observed/expected (see core.region_context).
+        # When given, it is added as an AFF covariate next to lp and sl.
+        self.region_cpg_oe = region_cpg_oe
 
     def build(
         self,
@@ -115,6 +122,12 @@ class DesignBuilder:
             )
             X["lp"] = lp
             X["sl"] = sl
+            if self.region_cpg_oe is not None:
+                cpg = pd.Series(
+                    [self.region_cpg_oe.get(r, float("nan")) for r in regions],
+                    index=regions, dtype=float,
+                )
+                X["cpg_oe"] = cpg.fillna(cpg.median() if cpg.notna().any() else 0.0)
 
         return WindowDesign(
             regions=regions, ref_allele=ref_allele, alt_alleles=alt_alleles, X=X, y=y

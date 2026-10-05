@@ -67,6 +67,15 @@ def _make_rand_sampler_for_matcher(matcher):
     return RandSampler(matcher.kmer_positions)
 
 
+def _region_cpg_for(intensities_path, values, genome_path, config):
+    """Per-region CpG o/e for the AFF covariate, or None when switched off."""
+    if config.get("no_cpg_covariate") or not config.get("include_covariates", True):
+        return None
+    from eubar.core.region_context import default_cache_path, load_region_cpg_oe
+    return load_region_cpg_oe(values.keys(), genome_path,
+                              cache_path=default_cache_path(intensities_path))
+
+
 def _init_snv_worker(
     intensities_path, array_path, genome_path, config, prebuilt_matcher=None
 ):
@@ -84,7 +93,8 @@ def _init_snv_worker(
         design = shared["design"]
     else:
         intens = IntensityTable.from_file(intensities_path)
-        design = DesignBuilder(intens.values)
+        design = DesignBuilder(intens.values, region_cpg_oe=_region_cpg_for(
+            intensities_path, intens.values, genome_path, config))
         if prebuilt_matcher is not None:
             matcher = prebuilt_matcher
         else:
@@ -231,6 +241,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode", choices=["nb", "ols"], default=defaults.mode, help=argparse.SUPPRESS,
     )
     p.add_argument("--no-covariates", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument(
+        "--no-cpg-covariate", action="store_true", dest="no_cpg_covariate",
+        help=(
+            "Do not adjust the AFF test for regional CpG observed/expected "
+            "(on by default; computed once from --genome and cached next to the "
+            "intensity file)."
+        ),
+    )
     p.add_argument("--raw-lp", action="store_true", help=argparse.SUPPRESS)
     p.add_argument(
         "--seed", type=int, default=defaults.seed,
@@ -283,7 +301,10 @@ def run_snv(config: SnvConfig) -> int:
             file=sys.stderr,
         )
 
-    design = DesignBuilder(intens.values)
+    cpg_cfg = {"no_cpg_covariate": bool(args.no_cpg_covariate),
+               "include_covariates": (not args.no_covariates)}
+    design = DesignBuilder(intens.values, region_cpg_oe=_region_cpg_for(
+        args.intensities, intens.values, args.genome, cpg_cfg))
     engine = RegressionEngine()
     prebuilt_windows = {}
 
@@ -435,6 +456,7 @@ def run_snv(config: SnvConfig) -> int:
             "seed": args.seed,
             "no_rand": args.no_rand,
             "debug": args.debug,
+            "no_cpg_covariate": bool(args.no_cpg_covariate),
         }
         n_workers = min(int(args.jobs), len(snvs))
         ctx = _preferred_mp_context()
